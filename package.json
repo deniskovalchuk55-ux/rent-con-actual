@@ -1,8 +1,17 @@
 {
   "name": "rent-control",
-  "version": "1.0.0",
+  "version": "5.0.0",
   "private": true,
-  "engines": {
-    "node": "20.x"
+  "description": "Rent·Control — Telegram Mini App для обліку оренди, роботи, цілей і активів (дані в Notion)",
+  "scripts": {
+    "build": "node build.mjs",
+    "demo": "node build.mjs --demo"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }
