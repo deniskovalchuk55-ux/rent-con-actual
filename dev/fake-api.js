@@ -196,12 +196,15 @@ export function installFakeBackend(fake, { user = { id: 111, first_name: 'Анд
     if (u.includes('er-api.com') || u.includes('privatbank')) return json(500, {})
     return realFetch(url, opts)
   }
+  const tgHandlers = {}
+  window.__tgEmit = name => { for (const h of tgHandlers[name] || []) { try { h() } catch (e) { console.error(e) } } }
   window.Telegram = {
     WebApp: {
       initData: '', initDataUnsafe: { user }, platform: 'demo', colorScheme: window.__demoScheme || 'dark', version: '8.0',
       ready() {}, expand() {}, disableVerticalSwipes() {}, isVersionAtLeast: () => true,
       setHeaderColor() {}, setBackgroundColor() {}, setBottomBarColor() {},
-      onEvent() {}, offEvent() {},
+      onEvent(name, fn) { (tgHandlers[name] = tgHandlers[name] || []).push(fn) },
+      offEvent(name, fn) { tgHandlers[name] = (tgHandlers[name] || []).filter(h => h !== fn) },
       HapticFeedback: { impactOccurred() {}, notificationOccurred() {}, selectionChanged() {} },
       BackButton: { show() { window.__backVisible = true }, hide() { window.__backVisible = false }, onClick(fn) { window.__back = fn }, offClick() {} },
       CloudStorage: { getItem: (k, cb) => cb(null, null), setItem: (k, v, cb) => cb && cb(null, true) },

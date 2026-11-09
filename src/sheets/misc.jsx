@@ -50,6 +50,7 @@ export function SettingsSheet({ sheetId, closing }) {
   const user = useStore(st => st.user)
   const sync = useStore(st => st.sync)
   const data = useStore(st => st.data)
+  const platform = useStore(st => st.platform)
   const counts = { c: data.clients.length, w: data.workEntries.length, g: data.goals.length, a: data.assets.length }
   const r = s.rates
   const [busy, setBusy] = useState(false)
@@ -115,7 +116,7 @@ export function SettingsSheet({ sheetId, closing }) {
         <KV k="Записів" v={`${counts.c} орендарів · ${counts.w} робіт${s.modules.goals ? ' · ' + counts.g + ' цілей' : ''}${s.modules.assets ? ' · ' + counts.a + ' монет' : ''}`} />
         <div className="stack" style={{ marginTop: 12 }}>
           <button className="btn sm" style={{ width: '100%' }} onClick={() => syncAll()}><Icon.refresh className={sync.busy ? 'spin' : ''} />Синхронізувати зараз</button>
-          <button className="btn sm" style={{ width: '100%' }} onClick={exportJSON}><Icon.download />Експорт у JSON</button>
+          <button className="btn sm" style={{ width: '100%' }} onClick={exportJSON}>{CAN_DOWNLOAD.test(platform || '') ? <><Icon.download />Експорт у JSON</> : <><Icon.copy />Скопіювати дані (JSON)</>}</button>
           <button className="btn sm ghost" style={{ width: '100%' }} onClick={() => openSheet('confirm', {
             title: 'Очистити кеш на пристрої?', text: 'Дані в Notion не зміняться. Застосунок просто завантажить усе заново.', confirmText: 'Очистити',
             onConfirm: () => { clearCache(); syncAll(); toast('Кеш очищено', { kind: 'success' }) },
@@ -130,10 +131,23 @@ export function SettingsSheet({ sheetId, closing }) {
   )
 }
 
+// Завантаження файлів працює в Telegram Desktop / macOS / Web; у мобільних вебвʼю воно мовчки не спрацьовує,
+// тож там копіюємо JSON у буфер (його можна вставити, наприклад, у «Збережені»)
+const CAN_DOWNLOAD = /^(tdesktop|macos|weba|webk|web|unigram)$/
+
+function copyJSON(text) {
+  try {
+    navigator.clipboard.writeText(text).then(
+      () => { haptic.success(); toast('JSON скопійовано — встав у «Збережені» чи нотатки', { kind: 'success', duration: 3500 }) },
+      () => toast('Не вдалось скопіювати JSON', { kind: 'error' }))
+  } catch { toast('Не вдалось скопіювати JSON', { kind: 'error' }) }
+}
+
 function exportJSON() {
   const st = getState()
   const payload = { app: 'rent-control', version: 5, exportedAt: new Date().toISOString(), settings: st.settings, data: st.data }
   const text = JSON.stringify(payload, null, 2)
+  if (!CAN_DOWNLOAD.test(st.platform || '')) return copyJSON(text)
   try {
     const blob = new Blob([text], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -146,8 +160,7 @@ function exportJSON() {
     haptic.success()
     toast('Бекап сформовано', { kind: 'success' })
   } catch {
-    // у деяких вебвʼю завантаження заблоковані — копіюємо в буфер
-    navigator.clipboard && navigator.clipboard.writeText(text).then(() => toast('JSON скопійовано в буфер', { kind: 'success' }), () => toast('Не вдалось експортувати', { kind: 'error' }))
+    copyJSON(text) // завантаження заблоковане — копіюємо в буфер
   }
 }
 
