@@ -1,10 +1,10 @@
 // Дії: оптимістично змінюємо стан, потім пишемо в Notion. При помилці — відкат і повідомлення.
-import { getState, setState, updateData, updateSettings, syncBusy, loadCache, loadSettings, pullCloudSettings, emptyData, flushPersist } from './store.js'
+import { getState, setState, updateData, updateSettings, syncBusy, loadCache, loadSettings, pullCloudSettings, emptyData, emptyFinance, flushPersist } from './store.js'
 import { toast, remapSheetIds } from './ui.js'
 import { haptic, initTelegram } from '../lib/telegram.js'
 import { setInitData, queryAll, createPage, updatePage, archivePage, cgPrices } from '../lib/notion/api.js'
 import * as S from '../lib/notion/schema.js'
-import { fetchRates } from '../lib/money.js'
+import { fetchRates, EXTRA_CURRENCIES } from '../lib/money.js'
 import { today, toISO } from '../lib/dates.js'
 
 const tgId = () => getState().user && getState().user.id
@@ -183,6 +183,7 @@ export async function boot() {
     settings,
     data: cache ? cache.data : emptyData(),
     prices: cache ? cache.prices || {} : {},
+    finance: cache && cache.finance ? { ...emptyFinance(), ...cache.finance, loading: false, error: null } : emptyFinance(),
     loaded: cache ? { core: true, expenses: !!cache.loaded?.expenses, goals: !!cache.loaded?.goals, assets: !!cache.loaded?.assets } : s.loaded,
     sync: { ...s.sync, fromCache: !!cache, lastSync: cache ? cache.savedAt : null },
   }))
@@ -224,6 +225,7 @@ export async function syncAll({ initial = false, silent = false } = {}) {
       loadExpenses(),
       mods.goals ? loadGoals() : null,
       mods.assets ? loadAssets() : null,
+      mods.accounts ? import('./finance.js').then(f => f.refreshBalances({ force: !initial })).catch(() => null) : null,
     ])
     if (!initial && !silent) toast('Синхронізовано з Notion', { kind: 'success' })
     return true
@@ -237,7 +239,7 @@ export async function syncAll({ initial = false, silent = false } = {}) {
   }
 }
 
-async function loadExpenses() {
+export async function loadExpenses() {
   try {
     const [exp, cats] = await Promise.all([queryAll(S.DB.EXPENSES), queryAll(S.DB.CAT_EXPENSES)])
     setState(s => ({
@@ -302,6 +304,7 @@ export function setModule(name, on) {
   updateSettings(s => ({ modules: { ...s.modules, [name]: on } }))
   if (on && name === 'goals' && getState().loaded.goals !== true) loadGoals()
   if (on && name === 'assets' && getState().loaded.assets !== true) loadAssets()
+  if (on && name === 'accounts') import('./finance.js').then(f => f.refreshBalances({ force: true })).catch(() => {})
 }
 
 export async function refreshRatesNow() {
@@ -309,7 +312,9 @@ export async function refreshRatesNow() {
   try {
     const r = await fetchRates()
     if (!r) { toast('Жодне джерело курсів не відповіло. Можна ввести вручну', { kind: 'error' }); return false }
-    updateSettings(s => ({ rates: { ...s.rates, UAH: r.UAH, PLN: r.PLN || s.rates.PLN, auto: true, source: r.source, updated: new Date().toISOString() } }))
+    const extra = {}
+    for (const cc of EXTRA_CURRENCIES) if (r[cc]) extra[cc] = r[cc]
+    updateSettings(s => ({ rates: { ...s.rates, ...extra, UAH: r.UAH, PLN: r.PLN || s.rates.PLN, auto: true, source: r.source, updated: new Date().toISOString() } }))
     return true
   } finally { syncBusy(-1) }
 }
@@ -323,7 +328,13 @@ export function setRatesManual(UAH, PLN) {
 function maybeRefreshRates() {
   const r = getState().settings.rates
   const stale = !r.updated || Date.now() - new Date(r.updated).getTime() > 6 * 3600 * 1000
-  if (r.auto && stale) refreshRatesNow()
+  if (r.auto && (stale || !r.EUR)) refreshRatesNow() // !EUR — курси збережені ще до підтримки інших валют
+  else if (!r.auto && !r.EUR) fetchRates().then(x => { // ручні UAH/PLN не чіпаємо, лише додаємо EUR тощо
+    if (!x) return
+    const extra = {}
+    for (const cc of EXTRA_CURRENCIES) if (x[cc]) extra[cc] = x[cc]
+    updateSettings(s => ({ rates: { ...s.rates, ...extra } }))
+  }).catch(() => {})
 }
 
 /* ===== Орендарі ===== */

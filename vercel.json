@@ -3,9 +3,11 @@
   "framework": null,
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "regions": ["fra1"],
   "functions": {
-    "api/notion.js": { "maxDuration": 10 },
-    "api/coingecko.js": { "maxDuration": 10 }
+    "api/notion.js": { "maxDuration": 15 },
+    "api/coingecko.js": { "maxDuration": 10 },
+    "api/finance.js": { "maxDuration": 30 }
   },
   "headers": [
     {

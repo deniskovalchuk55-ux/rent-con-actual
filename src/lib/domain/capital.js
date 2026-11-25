@@ -97,8 +97,16 @@ export function portfolioHistory(assets, histories, rates) {
 
 export function fmtQty(q) {
   if (!q) return '0'
-  const s = q >= 1000 ? q.toFixed(2) : q >= 1 ? q.toFixed(4) : q.toFixed(6)
-  return s.replace(/\.?0+$/, '').replace('.', ',')
+  const neg = q < 0
+  const a = Math.abs(q)
+  // дрібні залишки (0,00000012 BTC) не мають перетворюватись на «0»
+  const s = a >= 1000 ? a.toFixed(2) : a >= 1 ? a.toFixed(4)
+    : a.toFixed(Math.min(10, Math.max(6, 2 - Math.floor(Math.log10(a)))))
+  const [int, frac = ''] = s.split('.')
+  const f = frac.replace(/0+$/, '')
+  // 2 500 000 замість 2500000 — розряди вузьким нерозривним пробілом, як у сумах
+  const g = int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return (neg ? '−' : '') + g + (f ? ',' + f : '')
 }
 
 export function fmtPriceUSD(p) {

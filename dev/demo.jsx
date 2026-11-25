@@ -1,6 +1,7 @@
 // Демо-збірка: той самий застосунок, але з фейковим Notion і демо-даними (для перегляду поза Telegram і тестів).
 import { createFake, installFakeBackend } from './fake-api.js'
 import { seed } from './seed.js'
+import { createFakeFinance } from './fake-finance.js'
 
 const params = new URLSearchParams(location.search)
 const fake = createFake({ latency: Number(params.get('lat') || 140) })
@@ -12,12 +13,16 @@ const hostScheme = () => {
   try { return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark' } catch { return 'dark' }
 }
 window.__demoScheme = params.get('theme') || hostScheme()
-installFakeBackend(fake)
+// ?banks=0 — демо без підключених банків і бірж (екран налаштування)
+const finance = params.get('banks') === '0'
+  ? createFakeFinance(fake, { configured: { mono: false, bybit: false, bingx: false, mexc: false, enablebanking: false } })
+  : createFakeFinance(fake)
+installFakeBackend(fake, { finance })
 
 try {
   // демо стартує з увімкненими цілями й активами (якщо в демо ще не було збережених налаштувань)
   if (!localStorage.getItem('rc5:settings') && params.get('fresh') !== '0') {
-    localStorage.setItem('rc5:settings', JSON.stringify({ modules: { rent: true, work: true, goals: true, assets: true }, updatedAt: 1 }))
+    localStorage.setItem('rc5:settings', JSON.stringify({ modules: { rent: true, work: true, goals: true, assets: true, accounts: true }, updatedAt: 1 }))
   }
   if (params.get('nocache') === '1') Object.keys(localStorage).filter(k => k.startsWith('rc5:cache')).forEach(k => localStorage.removeItem(k))
 } catch { /* приватний режим */ }
