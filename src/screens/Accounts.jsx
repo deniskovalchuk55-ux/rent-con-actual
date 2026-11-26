@@ -125,6 +125,7 @@ function HistoryCard() {
   const rec = recurringPayments(rows, rates)
   const recTotal = rec.reduce((acc, x) => acc + x.usd, 0)
   const nextRec = rec.filter(x => x.nextDate >= Date.now() - 864e5).sort((a, b) => a.nextDate - b.nextDate)[0]
+  const rise = rec.filter(x => x.change && x.change.pct > 0).sort((a, b) => b.change.since - a.change.since)[0]
   return (
     <Section title="Історія">
       <button className="card pressable row" style={{ width: '100%', textAlign: 'left', gap: 12 }} onClick={() => { haptic.tap(); openSheet('history', {}) }}>
@@ -132,7 +133,7 @@ function HistoryCard() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 650 }}>Усі операції по місяцях</div>
           <div className="muted num" style={{ fontSize: 13, marginTop: 2 }}>
-            {bf && bf.running ? <>Підтягую {bf.label}… ще {bf.left} міс.</> : <>Цього місяця: <span className="pos">+{m.fmt(s.in)}</span> · −{m.fmt(s.out)}</>}
+            {bf && bf.running ? <>Підтягую {bf.label}…{bf.mins > 1 ? <> ще ~{bf.mins} хв</> : null}</> : <>Цього місяця: <span className="pos">+{m.fmt(s.in)}</span> · −{m.fmt(s.out)}</>}
           </div>
         </div>
         <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />
@@ -142,7 +143,9 @@ function HistoryCard() {
           <IconTile icon={Icon.repeat} color="var(--blue)" bg="var(--blue-soft)" />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 650 }}>Регулярні платежі · <span className="num">{m.fmt(recTotal)}</span>/міс</div>
-            <div className="muted ellipsis" style={{ fontSize: 13, marginTop: 2 }}>{nextRec ? <>Наступне: {nextRec.title}, {fmtDateShort(new Date(nextRec.nextDate))}</> : <>{rec.length} підписок і платежів</>}</div>
+            {rise
+              ? <div className="ellipsis" style={{ fontSize: 13, marginTop: 2, color: 'var(--warn)' }}>{rise.title} подорожчав на {Math.round(rise.change.pct * 100)}%</div>
+              : <div className="muted ellipsis" style={{ fontSize: 13, marginTop: 2 }}>{nextRec ? <>Наступне: {nextRec.title}, {fmtDateShort(new Date(nextRec.nextDate))}</> : <>{rec.length} підписок і платежів</>}</div>}
           </div>
           <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />
         </button>

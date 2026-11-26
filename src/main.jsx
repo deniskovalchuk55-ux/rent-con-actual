@@ -4,6 +4,8 @@ import App from './app.jsx'
 import { boot } from './state/actions.js'
 import { useStore } from './state/store.js'
 import { Icon } from './ui/icons.jsx'
+import { LockScreen } from './ui/lock.jsx'
+import { useLock, initLock } from './state/lock.js'
 
 function NoTelegram() {
   return (
@@ -19,10 +21,18 @@ function NoTelegram() {
 
 function Root() {
   const phase = useStore(s => s.phase)
+  const locked = useLock(s => s.locked)
   if (phase === 'no-telegram') return <NoTelegram />
-  if (phase !== 'ready') return null
-  return <App />
+  if (phase !== 'ready') return <LockScreen />
+  // поки замкнено, застосунок під непрозорим шаром і недоступний для фокуса й читалок екрана
+  return (
+    <>
+      <div inert={locked || undefined} aria-hidden={locked || undefined}><App /></div>
+      <LockScreen />
+    </>
+  )
 }
 
 createRoot(document.getElementById('root')).render(<Root />)
 boot()
+initLock()

@@ -160,7 +160,19 @@ export function loadLedger({ full = false } = {}) {
       const rows = pages.map(S.parseLedger).filter(r => r.tgId === uid)
       setState(s => {
         let list = rows
-        if (incremental) { const m = new Map(s.data.ledger.map(r => [r.id, r])); for (const r of rows) m.set(r.id, r); list = [...m.values()] }
+        if (incremental) {
+          const m = new Map(s.data.ledger.map(r => [r.id, r]))
+          for (const r of rows) m.set(r.id, r)
+          // одна банківська операція — один рядок: якщо сторінку в Notion перестворили, у кеші лишилась би копія
+          const fresh = new Set(rows.map(r => r.id))
+          const byBank = new Map()
+          for (const r of m.values()) {
+            const k = r.bankId ? 'b:' + r.bankId : 'i:' + r.id
+            const cur = byBank.get(k)
+            if (!cur || (fresh.has(r.id) && !fresh.has(cur.id))) byBank.set(k, r)
+          }
+          list = [...byBank.values()]
+        }
         list = list.filter(r => String(r.date).slice(0, 10) >= since).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
         return { ...s, data: { ...s.data, ledger: list }, loaded: { ...s.loaded, ledger: true }, finance: { ...s.finance, ledgerSyncedAt: startedAt } }
       })
@@ -287,7 +299,10 @@ export async function runBackfill() {
       if (!pending.length) { setFin({ backfill: { running: false, total: months, left: 0 } }); break }
       // біржі швидкі — спершу їх; Монобанк — від свіжих місяців до старших
       const t = pending.find(x => x.type === 'ex') || pending[0]
-      setFin({ backfill: { running: true, total: months, left, label: t.label } })
+      // скільки ще чекати: Монобанк віддає одну виписку на хвилину, біржі — за секунди
+      const monoLeft = pending.filter(x => x.type === 'mono').length
+      const mins = Math.ceil((monoLeft * MONO_GAP() + (pending.length - monoLeft) * 1500) / 60e3)
+      setFin({ backfill: { running: true, total: months, left, label: t.label, mins } })
       try {
         let entries = []
         if (t.type === 'mono') {

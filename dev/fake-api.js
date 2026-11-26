@@ -208,6 +208,19 @@ export function installFakeBackend(fake, { user = { id: 111, first_name: 'Анд
   }
   const tgHandlers = {}
   window.__tgEmit = name => { for (const h of tgHandlers[name] || []) { try { h() } catch (e) { console.error(e) } } }
+  // біометрія й іконка на головному екрані: ?bio=face|finger|none, ?biofail=1 (перевірка не проходить), ?home=missed|added
+  const q = new URLSearchParams(location.search)
+  const bioMode = q.get('bio') || 'face'
+  if (q.get('biofail') === '1') window.__bioFail = true
+  window.__bio = { auth: 0, access: 0, settings: 0 }
+  const BiometricManager = {
+    isInited: false, isBiometricAvailable: false, biometricType: 'unknown', isAccessRequested: false, isAccessGranted: false, isBiometricTokenSaved: false, deviceId: 'demo-device-1',
+    init(cb) { setTimeout(() => { Object.assign(BiometricManager, { isInited: true, isBiometricAvailable: bioMode !== 'none', biometricType: bioMode === 'none' ? 'unknown' : bioMode }); cb && cb() }, 30) },
+    requestAccess(params, cb) { setTimeout(() => { window.__bio.access++; BiometricManager.isAccessRequested = true; BiometricManager.isAccessGranted = !window.__bioDeny; cb && cb(BiometricManager.isAccessGranted) }, 40) },
+    authenticate(params, cb) { setTimeout(() => { window.__bio.auth++; window.__bio.reason = params && params.reason; const ok = !window.__bioFail; cb && cb(ok, ok ? '' : undefined) }, 80) },
+    updateBiometricToken(token, cb) { cb && cb(true) },
+    openSettings() { window.__bio.settings++ },
+  }
   window.Telegram = {
     WebApp: {
       initData: '', initDataUnsafe: { user }, platform: 'demo', colorScheme: window.__demoScheme || 'dark', version: '8.0',
@@ -220,6 +233,9 @@ export function installFakeBackend(fake, { user = { id: 111, first_name: 'Анд
       CloudStorage: { getItem: (k, cb) => cb(null, null), setItem: (k, v, cb) => cb && cb(null, true) },
       openLink: url => { window.__openedLink = url }, openTelegramLink: url => { window.__openedLink = url },
       enableClosingConfirmation() {}, disableClosingConfirmation() {},
+      isActive: true, BiometricManager,
+      checkHomeScreenStatus(cb) { setTimeout(() => cb && cb(window.__homeStatus || q.get('home') || 'missed'), 20) },
+      addToHomeScreen() { window.__homeAdded = true; setTimeout(() => window.__tgEmit('homeScreenAdded'), 60) },
     },
   }
   window.__fake = fake
