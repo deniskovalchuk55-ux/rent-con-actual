@@ -2,7 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useDerived, useStore, getState } from '../state/store.js'
 import { openSheet, closeSheet, replaceSheet, toast } from '../state/ui.js'
-import { addClient, updateClient, deleteClient, addPayment, deletePayment } from '../state/actions.js'
+import { addClient, updateClient, deleteClient, addPayment, deletePayment, skipRentMatch } from '../state/actions.js'
 import { useMoney } from '../ui/money.jsx'
 import { Icon } from '../ui/icons.jsx'
 import { Sheet, burstConfetti } from '../ui/sheet.jsx'
@@ -260,15 +260,15 @@ export function ClientFormSheet({ sheetId, closing, id }) {
 
 const QUICK = [1, 3, 6, 12]
 
-export function PaySheet({ sheetId, closing, clientId }) {
+export function PaySheet({ sheetId, closing, clientId, initialMonths, initialDate, matchId }) {
   const d = useDerived()
   const m = useMoney()
   const c = d.clients.find(x => x.id === clientId)
   const [mode, setMode] = useState('months')
-  const [months, setMonths] = useState('1')
+  const [months, setMonths] = useState(initialMonths ? String(initialMonths) : '1')
   const [amount, setAmount] = useState('')
   const [cur, setCur] = useState(c ? c.cur : 'USD')
-  const [date, setDate] = useState(toISO(today()))
+  const [date, setDate] = useState(initialDate || toISO(today()))
   if (!c) return <Sheet sheetId={sheetId} closing={closing} title="Оплата"><Empty title="Орендаря не знайдено" /></Sheet>
 
   const mNum = mode === 'months' ? (parseAmount(months) || 0) : (c.rate > 0 ? m.convert(parseAmount(amount) || 0, cur, c.cur) / c.rate : 0)
@@ -281,6 +281,7 @@ export function PaySheet({ sheetId, closing, clientId }) {
     if (!ok) return
     const first = !(c.payments || []).length
     addPayment(c.id, { months: Math.round(mNum * 10000) / 10000, amountNative: Math.round(amountNative * 100) / 100, cur: c.cur, date })
+    if (matchId) skipRentMatch(matchId) // підказку з банку більше не показуємо
     toast(`Зараховано ${formatMoney(amountNative, c.cur)} · ${fmtMonthsDays(mNum)}`, { kind: 'success' })
     if (first || mNum >= 6) burstConfetti()
     closeSheet(sheetId)

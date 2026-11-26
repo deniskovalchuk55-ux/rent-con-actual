@@ -7,6 +7,7 @@ import { Icon } from '../ui/icons.jsx'
 import { Avatar, Ring, Section, Chips, Empty, Skeleton, Segmented } from '../ui/kit.jsx'
 import { TopBar } from './common.jsx'
 import { LEVEL_COLOR } from './Home.jsx'
+import { RentMatches } from './RentMatches.jsx'
 import { statusOf, periodProgress, nextPayText, portfolioMonthlyUSD, clientDoneUSD, clientInProgressUSD, rentDoneUSD, referralTotals, referralBonusUSD, isReferralReady } from '../lib/domain/rent.js'
 import { AVG_MONTH_DAYS, startOf, plural } from '../lib/dates.js'
 import { formatMoney } from '../lib/money.js'
@@ -50,6 +51,7 @@ export default function Rent() {
       {!loaded ? <div className="stack"><Skeleton h={190} r={26} /><Skeleton h={64} r={18} /><Skeleton h={64} r={18} /><Skeleton h={64} r={18} /></div> : (
         <div className="stagger">
           <MrrHero mrr={mrr} />
+          {clients.length > 0 && <RentMatches />}
 
           {clients.length === 0 ? (
             <div className="card" style={{ marginTop: 16 }}>
