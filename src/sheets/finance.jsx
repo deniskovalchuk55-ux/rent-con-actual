@@ -111,9 +111,9 @@ export function IntegrationsSheet({ sheetId, closing }) {
         </Block>
 
         {[
-          { name: 'bybit', title: 'Bybit', vars: ['BYBIT_API_KEY', 'BYBIT_API_SECRET'], where: 'Профіль → API → Create New Key → System-generated, права лише Read-Only' },
+          { name: 'bybit', title: 'Bybit', vars: ['BYBIT_API_KEY', 'BYBIT_API_SECRET'], where: 'Профіль → API → Create New Key → System-generated → Read-Only, усі галочки (Unified Trading, Assets, Earn) — інакше не буде історії поповнень і виведень' },
           { name: 'bingx', title: 'BingX', vars: ['BINGX_API_KEY', 'BINGX_API_SECRET'], where: 'Профіль → API Management → Create API, лише Read' },
-          { name: 'mexc', title: 'MEXC', vars: ['MEXC_API_KEY', 'MEXC_API_SECRET'], where: 'Профіль → API Management → Create, лише View/Read' },
+          { name: 'mexc', title: 'MEXC', vars: ['MEXC_API_KEY', 'MEXC_API_SECRET'], where: 'Профіль → API Management → Create, усі пункти View/Read, зокрема перегляд поповнень і виведень' },
         ].map(x => {
           const p = prov(x.name)
           return (
