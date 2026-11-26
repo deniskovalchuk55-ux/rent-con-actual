@@ -11,18 +11,38 @@ import { TopBar } from './common.jsx'
 import { deadlineInfo, portfolioHistory, fmtQty, fmtPriceUSD } from '../lib/domain/capital.js'
 import { cgHistory } from '../lib/notion/api.js'
 import { haptic } from '../lib/telegram.js'
+import { Accounts, CoinBadge } from './Accounts.jsx'
+import { exchangeCoins } from '../lib/domain/finance.js'
+import { anyProvider, canSeeBanks } from '../state/finance.js'
+
+const SUBS = { accounts: 'Банки й біржі', goals: 'Накопичення на цілі', assets: 'Портфель і монети' }
+// остання відкрита вкладка — щоб після «Оренди» чи «Роботи» повертатись туди ж
+let lastPart = null
 
 export default function Capital() {
   const modules = useStore(s => s.settings.modules)
-  const opts = [modules.goals && { value: 'goals', label: 'Цілі' }, modules.assets && { value: 'assets', label: 'Активи' }].filter(Boolean)
-  const [part, setPart] = useState(opts[0] ? opts[0].value : 'goals')
+  const finStatus = useStore(s => s.finance.status)
+  const opts = [
+    modules.accounts && { value: 'accounts', label: 'Рахунки' },
+    modules.goals && { value: 'goals', label: 'Цілі' },
+    modules.assets && { value: 'assets', label: 'Активи' },
+  ].filter(Boolean)
+  const [part, setPart0] = useState(() => {
+    if (lastPart && opts.some(o => o.value === lastPart)) return lastPart
+    // поки банки не підключені, першими показуємо цілі, а не інструкцію з налаштування
+    const banksReady = anyProvider(finStatus) && canSeeBanks(finStatus)
+    const first = banksReady ? opts[0] : opts.find(o => o.value !== 'accounts') || opts[0]
+    return first ? first.value : 'goals'
+  })
+  const setPart = v => { lastPart = v; setPart0(v) }
   const active = opts.some(o => o.value === part) ? part : opts[0] && opts[0].value
+  const add = () => { haptic.tap(); openSheet(active === 'assets' ? 'assetSearch' : active === 'accounts' ? 'integrations' : 'goalForm', {}) }
   return (
     <div className="screen">
-      <TopBar title="Капітал" sub={active === 'assets' ? 'Портфель і монети' : 'Накопичення на цілі'}
-        extra={<button className="icon-btn" onClick={() => { haptic.tap(); openSheet(active === 'assets' ? 'assetSearch' : 'goalForm', {}) }} aria-label="Додати"><Icon.plus /></button>} />
+      <TopBar title="Капітал" sub={SUBS[active] || ''}
+        extra={<button className="icon-btn" onClick={add} aria-label={active === 'accounts' ? 'Підключення' : 'Додати'}>{active === 'accounts' ? <Icon.link /> : <Icon.plus />}</button>} />
       {opts.length > 1 && <div style={{ marginBottom: 14 }}><Segmented options={opts} value={active} onChange={setPart} /></div>}
-      {active === 'assets' ? <Assets /> : <Goals />}
+      {active === 'assets' ? <Assets /> : active === 'accounts' ? <Accounts /> : <Goals />}
     </div>
   )
 }
@@ -113,17 +133,23 @@ function Assets() {
       .then(entries => { if (!off) setHist(Object.fromEntries(entries)) })
     return () => { off = true }
   }, [ids, days])
+  const providers = useStore(s => s.finance.providers)
+  const coinMeta = useStore(s => s.finance.coinMeta)
+  const exCoins = useMemo(() => exchangeCoins(providers, m.rates), [providers, m.rates])
+  const exUSD = exCoins.reduce((s, c) => s + c.usd, 0)
   const points = useMemo(() => (hist ? portfolioHistory(assets, hist, m.rates) : []), [hist, assets, m.rates])
 
-  if (loaded !== true && !assets.length) {
+  if (loaded !== true && !assets.length && !exCoins.length) {
     if (loaded === 'error') return <div className="card"><Empty icon={Icon.alert} title="Активи недоступні" text="Перевір у Vercel змінні DB_ASSETS і DB_ASSET_TX." /></div>
     return <div className="stack"><Skeleton h={240} r={26} /><Skeleton h={64} r={18} /><Skeleton h={64} r={18} /></div>
   }
-  const value = assets.reduce((s, a) => s + a.valueUSD, 0)
+  const manualValue = assets.reduce((s, a) => s + a.valueUSD, 0)
+  const value = manualValue + exUSD
   const invested = assets.reduce((s, a) => s + a.investedUSD, 0)
-  const pnl = value - invested
+  const pnl = manualValue - invested
   const ch24 = assets.reduce((s, a) => s + a.valueUSD * (a.change24h / 100) / (1 + a.change24h / 100), 0)
-  const shownV = scrub != null && points[scrub] ? points[scrub].v : value
+    + exCoins.reduce((s, c) => { const ch = (coinMeta[c.cgId] || {}).change24h || 0; return s + c.usd * (ch / 100) / (1 + ch / 100) }, 0)
+  const shownV = scrub != null && points[scrub] ? points[scrub].v + exUSD : value
   const shownDate = scrub != null && points[scrub] ? new Date(points[scrub].t) : null
 
   return (
@@ -134,16 +160,38 @@ function Assets() {
           <span className={'pill ' + (ch24 >= 0 ? 'pos' : 'neg')}>{m.fmt(ch24, { sign: 'always' })} за 24 год</span>
         </div>
         <div className="hero-amount num">{m.fmt(shownV)}</div>
-        <div className="hero-sub">P&L <b className={'num ' + (pnl >= 0 ? 'pos' : 'neg')}>{m.fmt(pnl, { sign: 'always' })} ({invested > 0 ? (pnl >= 0 ? '+' : '') + ((pnl / invested) * 100).toFixed(1).replace('.', ',') : '0'}%)</b> · вкладено {m.fmt(invested)}</div>
+        <div className="hero-sub">{invested > 0 || !exUSD ? <>P&L <b className={'num ' + (pnl >= 0 ? 'pos' : 'neg')}>{m.fmt(pnl, { sign: 'always' })} ({invested > 0 ? (pnl >= 0 ? '+' : '') + ((pnl / invested) * 100).toFixed(1).replace('.', ',') : '0'}%)</b> · вкладено {m.fmt(invested)}</> : null}
+          {exUSD > 0 && <>{invested > 0 ? ' · ' : ''}на біржах <b className="num" style={{ color: 'var(--text)' }}>{m.fmt(exUSD)}</b></>}</div>
         <div className="hero-chart" style={{ minHeight: 110 }}>
           {hist === null ? <div style={{ height: 110, display: 'grid', placeItems: 'center' }}><div className="sk" style={{ width: '80%', height: 60 }} /></div>
-            : points.length > 1 ? <AreaChart values={points.map(p => p.v)} height={110} color={points[points.length - 1].v >= points[0].v ? 'var(--pos)' : 'var(--neg)'} onScrub={setScrub} />
+            : points.length > 1 ? <AreaChart values={points.map(p => p.v + exUSD)} height={110} color={points[points.length - 1].v >= points[0].v ? 'var(--pos)' : 'var(--neg)'} onScrub={setScrub} />
               : <div className="muted" style={{ height: 80, display: 'grid', placeItems: 'center', fontSize: 13 }}>Графік зʼявиться після першої покупки</div>}
         </div>
       </div>
       <div style={{ marginTop: 12 }}><Segmented options={RANGES} value={days} onChange={setDays} /></div>
 
-      <Section title="Мої монети" action={<button className="link" onClick={() => openSheet('assetSearch', {})}>Додати</button>}>
+      {exCoins.length > 0 && (
+        <Section title="На біржах" action={<span className="faint" style={{ fontSize: 13 }}>оновлюється само</span>}>
+          <div className="list">
+            {exCoins.map(c => {
+              const meta = coinMeta[c.cgId] || {}
+              const ch = meta.change24h
+              return (
+                <div key={c.asset} className="list-row static">
+                  <CoinBadge asset={c.asset} />
+                  <div className="main">
+                    <div className="title">{meta.name || c.asset} <span className="faint" style={{ fontWeight: 500, fontSize: 13 }}>{c.asset}</span></div>
+                    <div className="meta num">{fmtQty(c.qty)} · {[...new Set(c.parts.map(x => x.label))].join(', ')}{ch != null && <> <span className={ch >= 0 ? 'pos' : 'neg'}>{ch >= 0 ? '+' : ''}{ch.toFixed(1).replace('.', ',')}%</span></>}</div>
+                  </div>
+                  <div className="end"><div className="amount">{m.fmt(c.usd)}</div></div>
+                </div>
+              )
+            })}
+          </div>
+        </Section>
+      )}
+
+      <Section title={exCoins.length ? 'Записані вручну' : 'Мої монети'} action={<button className="link" onClick={() => openSheet('assetSearch', {})}>Додати</button>}>
         {assets.length ? (
           <div className="list">
             {[...assets].sort((a, b) => b.valueUSD - a.valueUSD).map(a => (

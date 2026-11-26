@@ -18,7 +18,7 @@ export const emptyData = () => ({
 export const defaultSettings = () => ({
   display: 'USD',
   theme: 'auto',
-  modules: { rent: true, work: true, goals: false, assets: false },
+  modules: { rent: true, work: true, goals: false, assets: false, accounts: true },
   workEarnedMode: 'accrued',
   overview: { kind: 'month', anchor: toISO(today()) },
   workView: 'calendar',
@@ -36,6 +36,12 @@ let state = {
   loaded: { core: false, expenses: false, goals: false, assets: false },
   prices: {},
   sync: { busy: 0, error: null, lastSync: null, fromCache: false },
+  // банки й біржі (дані з /api/finance; у Notion не пишуться)
+  finance: emptyFinance(),
+}
+
+export function emptyFinance() {
+  return { status: null, statusError: null, providers: [], fetchedAt: null, loading: false, error: null, coinMeta: {} }
 }
 
 const listeners = new Set()
@@ -49,7 +55,7 @@ export function setState(updater) {
   state = next
   for (const l of listeners) l()
   if (prev.settings !== next.settings) scheduleSettingsSave()
-  if (prev.data !== next.data || prev.prices !== next.prices) scheduleCacheSave()
+  if (prev.data !== next.data || prev.prices !== next.prices || prev.finance.providers !== next.finance.providers) scheduleCacheSave()
 }
 
 export function useStore(selector) {
@@ -108,7 +114,11 @@ function scheduleCacheSave() {
     const clean = arr => arr.filter(x => !String(x.id).startsWith('tmp-'))
     for (const k of Object.keys(data)) data[k] = clean(data[k])
     data.clients = data.clients.map(c => ({ ...c, payments: clean(c.payments || []) }))
-    ls.set(CACHE_PREFIX + state.user.id, { v: 5, savedAt: Date.now(), data, prices: state.prices, loaded: state.loaded })
+    const fin = state.finance
+    ls.set(CACHE_PREFIX + state.user.id, {
+      v: 5, savedAt: Date.now(), data, prices: state.prices, loaded: state.loaded,
+      finance: { providers: fin.providers, fetchedAt: fin.fetchedAt, coinMeta: fin.coinMeta, status: fin.status },
+    })
   }, 900)
 }
 

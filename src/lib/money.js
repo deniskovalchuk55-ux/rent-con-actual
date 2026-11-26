@@ -2,7 +2,10 @@
 export const CURRENCIES = ['USD', 'UAH', 'PLN']
 export const SYM = { USD: '$', UAH: '₴', PLN: 'zł' }
 export const CUR_NAME = { USD: 'Долар', UAH: 'Гривня', PLN: 'Злотий' }
-export const DEFAULT_RATES = { UAH: 41, PLN: 4.0 }
+export const DEFAULT_RATES = { UAH: 41, PLN: 4.0, EUR: 0.86, GBP: 0.75, CHF: 0.8, CZK: 21 }
+// валюти рахунків, які не показуємо як «валюту відображення», але вміємо перераховувати
+export const EXTRA_CURRENCIES = ['EUR', 'GBP', 'CHF', 'CZK']
+export const SYM_ANY = { USD: '$', UAH: '₴', PLN: 'zł', EUR: '€', GBP: '£', CHF: 'CHF', CZK: 'Kč' }
 
 export function convert(amount, fromCur, toCur, rates) {
   const v = Number(amount) || 0
@@ -41,7 +44,8 @@ export function formatMoney(v, cur = 'USD', { sign = 'auto', decimals } = {}) {
   const neg = n < 0 && Math.abs(roundSmart(n)) > 0
   const pre = neg && sign !== 'never' ? '−' : (sign === 'always' && n > 0 ? '+' : '')
   if (cur === 'USD') return pre + '$' + s
-  return pre + s + NNBSP + SYM[cur]
+  if (cur === 'EUR' || cur === 'GBP') return pre + SYM_ANY[cur] + s
+  return pre + s + NNBSP + (SYM[cur] || SYM_ANY[cur] || cur)
 }
 
 // Компактно для графіків і календаря: 1,2k / 15k / 1,3M
@@ -76,13 +80,20 @@ export const FX_SOURCES = [
       const usd = data.find(x => x.cc === 'USD')
       const pln = data.find(x => x.cc === 'PLN')
       if (!usd) return null
-      return { UAH: usd.rate, PLN: pln ? usd.rate / pln.rate : null }
+      const out = { UAH: usd.rate, PLN: pln ? usd.rate / pln.rate : null }
+      for (const cc of EXTRA_CURRENCIES) { const row = data.find(x => x.cc === cc); if (row && row.rate) out[cc] = usd.rate / row.rate }
+      return out
     },
   },
   {
     name: 'ExchangeRate-API',
     url: 'https://open.er-api.com/v6/latest/USD',
-    parse: data => (data && data.rates ? { UAH: data.rates.UAH || null, PLN: data.rates.PLN || null } : null),
+    parse: data => {
+      if (!data || !data.rates) return null
+      const out = { UAH: data.rates.UAH || null, PLN: data.rates.PLN || null }
+      for (const cc of EXTRA_CURRENCIES) if (data.rates[cc]) out[cc] = data.rates[cc]
+      return out
+    },
   },
   {
     name: 'ПриватБанк',
@@ -91,9 +102,12 @@ export const FX_SOURCES = [
       if (!Array.isArray(data)) return null
       const usd = data.find(x => x.ccy === 'USD')
       const pln = data.find(x => x.ccy === 'PLN')
+      const eur = data.find(x => x.ccy === 'EUR')
       const uah = usd ? parseFloat(usd.sale) : null
       if (!uah) return null
-      return { UAH: uah, PLN: pln ? uah / parseFloat(pln.sale) : null }
+      const out = { UAH: uah, PLN: pln ? uah / parseFloat(pln.sale) : null }
+      if (eur && parseFloat(eur.sale)) out.EUR = uah / parseFloat(eur.sale)
+      return out
     },
   },
 ]
@@ -108,11 +122,13 @@ export async function fetchRates() {
       if (!r.ok) continue
       const rates = src.parse(await r.json())
       if (!rates || !rates.UAH) continue
-      return {
+      const out = {
         UAH: Math.round(rates.UAH * 100) / 100,
         PLN: rates.PLN ? Math.round(rates.PLN * 1000) / 1000 : null,
         source: src.name,
       }
+      for (const cc of EXTRA_CURRENCIES) if (rates[cc]) out[cc] = Math.round(rates[cc] * 10000) / 10000
+      return out
     } catch { /* наступне джерело */ }
   }
   return null

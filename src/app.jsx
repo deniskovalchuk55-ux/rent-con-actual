@@ -43,7 +43,7 @@ const TABS = [
 function TabBar() {
   const tab = useUI(u => u.tab)
   const modules = useStore(s => s.settings.modules)
-  const enabled = t => !t.module || (t.module === 'capital' ? modules.goals || modules.assets : modules[t.module])
+  const enabled = t => !t.module || (t.module === 'capital' ? modules.goals || modules.assets || modules.accounts : modules[t.module])
   return (
     <div className="tabbar-wrap">
       <nav className="tabbar" aria-label="Розділи">
@@ -116,7 +116,7 @@ export default function App() {
 
   // вимкнений модуль — повертаємось на Пульс
   useEffect(() => {
-    if ((tab === 'rent' && !modules.rent) || (tab === 'work' && !modules.work) || (tab === 'capital' && !modules.goals && !modules.assets)) setTab('home')
+    if ((tab === 'rent' && !modules.rent) || (tab === 'work' && !modules.work) || (tab === 'capital' && !modules.goals && !modules.assets && !modules.accounts)) setTab('home')
   }, [tab, modules])
 
   const Screen = { home: Home, rent: Rent, work: Work, capital: Capital }[tab] || Home

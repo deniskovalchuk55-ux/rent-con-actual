@@ -1,6 +1,9 @@
 // Виклики проксі /api/notion з повторами при тимчасових збоях (ліміт запитів, мережа, 5xx).
 let initData = ''
 export function setInitData(s) { initData = s || '' }
+// чи увімкнений на сервері захист підписом Telegram ('on' | 'off' | null — ще невідомо)
+let authMode = null
+export const getAuthMode = () => authMode
 
 export class ApiError extends Error {
   constructor(message, { status = 0, transient = false, data = null } = {}) {
@@ -22,6 +25,8 @@ async function post(url, body) {
   } catch (e) {
     throw new ApiError('Немає зʼєднання з сервером', { transient: true })
   }
+  const mode = res.headers && res.headers.get && res.headers.get('X-RC-Auth')
+  if (mode) authMode = mode
   let data = null
   try { data = await res.json() } catch { data = null }
   if (!res.ok) {
@@ -58,6 +63,20 @@ export async function queryAll(database, { sorts, filter } = {}) {
 export const createPage = (database, properties) => notionCall({ action: 'create', database, properties })
 export const updatePage = (pageId, properties) => notionCall({ action: 'update', pageId, properties })
 export const archivePage = pageId => notionCall({ action: 'archive', pageId })
+
+/* ===== Банки й біржі через /api/finance ===== */
+export async function financeCall(action, params = {}, { retries = 1 } = {}) {
+  let attempt = 0
+  for (;;) {
+    try {
+      return await post('/api/finance', { action, ...params })
+    } catch (e) {
+      if (!(e instanceof ApiError) || !e.transient || e.status === 429 || attempt >= retries) throw e
+      await sleep(700 * 2 ** attempt)
+      attempt++
+    }
+  }
+}
 
 /* ===== CoinGecko через проксі ===== */
 export async function cgCall(path, query) {

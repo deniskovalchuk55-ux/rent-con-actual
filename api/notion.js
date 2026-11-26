@@ -1,6 +1,11 @@
-// Vercel serverless function: proxy для Notion API
-// Безпека: ENV NOTION_TOKEN ніколи не йде у браузер.
-// Whitelist баз: тільки ці ключі дозволені для запитів.
+// Vercel serverless function: проксі для Notion API
+// Безпека:
+// - NOTION_TOKEN ніколи не йде у браузер;
+// - тільки бази з білого списку;
+// - коли задано TG_BOT_TOKEN: запит має бути підписаний Telegram (initData), а сервер сам
+//   обмежує записи Telegram ID користувача: читає лише свої, створює зі своїм ID,
+//   змінює й архівує тільки свої сторінки з цих баз.
+const { authFromRequest } = require('./_lib/telegram');
 
 const DB_WHITELIST = {
   // === Expense·Control ===
@@ -23,23 +28,45 @@ const DB_WHITELIST = {
   DB_ASSET_TX:        process.env.DB_ASSET_TX
 };
 
+// Категорії Expense·Control бувають спільними (без Telegram ID) — їх бачать усі
+const SHARED_FLAG = { DB_CAT_EXPENSES: 'Загальна', DB_CAT_INCOMES: 'Загальна' };
+const TG_COL = 'Telegram ID';
+
 const NOTION_API = 'https://api.notion.com/v1';
 const NOTION_VERSION = '2022-06-28';
+const norm = id => String(id || '').replace(/-/g, '').toLowerCase();
+
+async function notion(token, path, method, payload) {
+  const r = await fetch(NOTION_API + path, {
+    method,
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Notion-Version': NOTION_VERSION,
+      'Content-Type': 'application/json'
+    },
+    body: payload ? JSON.stringify(payload) : undefined
+  });
+  let data = null;
+  try { data = await r.json(); } catch { data = { error: 'Bad JSON from Notion' }; }
+  return { status: r.status, data };
+}
 
 module.exports = async (req, res) => {
-  // CORS
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const token = process.env.NOTION_TOKEN;
   if (!token) return res.status(500).json({ error: 'NOTION_TOKEN not set' });
 
+  const auth = authFromRequest(req);
+  res.setHeader('X-RC-Auth', auth.mode);
+  if (!auth.ok) return res.status(auth.status).json({ error: auth.error, reason: auth.reason });
+  const uid = auth.mode === 'on' ? auth.userId : null;
+
   try {
     const body = req.body || {};
-    const { action, database, pageId, properties, cursor, sorts, filter } = body;
+    const { action, database, pageId, cursor, sorts, filter } = body;
+    const properties = body.properties && typeof body.properties === 'object' ? { ...body.properties } : {};
 
     // resolve database id (only via whitelist)
     let dbId = null;
@@ -48,46 +75,49 @@ module.exports = async (req, res) => {
       if (!dbId) return res.status(400).json({ error: 'Bad or missing database: ' + database });
     }
 
-    let url, method = 'POST', payload = null;
-
     if (action === 'query') {
-      url = `${NOTION_API}/databases/${dbId}/query`;
-      payload = {};
+      if (!dbId) return res.status(400).json({ error: 'database required' });
+      const payload = {};
       if (cursor) payload.start_cursor = cursor;
       if (sorts) payload.sorts = sorts;
-      if (filter) payload.filter = filter;
-    } else if (action === 'create') {
-      url = `${NOTION_API}/pages`;
-      payload = {
-        parent: { database_id: dbId },
-        properties: properties || {}
-      };
-    } else if (action === 'update') {
-      if (!pageId) return res.status(400).json({ error: 'pageId required' });
-      url = `${NOTION_API}/pages/${pageId}`;
-      method = 'PATCH';
-      payload = { properties: properties || {} };
-    } else if (action === 'archive') {
-      if (!pageId) return res.status(400).json({ error: 'pageId required' });
-      url = `${NOTION_API}/pages/${pageId}`;
-      method = 'PATCH';
-      payload = { archived: true };
-    } else {
-      return res.status(400).json({ error: 'Unknown action: ' + action });
+      let f = filter || null;
+      if (uid != null) {
+        const own = { property: TG_COL, number: { equals: uid } };
+        const flag = SHARED_FLAG[database];
+        const scope = flag ? { or: [own, { property: flag, checkbox: { equals: true } }] } : own;
+        f = f ? { and: [f, scope] } : scope;
+      }
+      if (f) payload.filter = f;
+      const r = await notion(token, `/databases/${dbId}/query`, 'POST', payload);
+      return res.status(r.status).json(r.data);
     }
 
-    const notionRes = await fetch(url, {
-      method,
-      headers: {
-        'Authorization': 'Bearer ' + token,
-        'Notion-Version': NOTION_VERSION,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
-    });
-    const data = await notionRes.json();
-    return res.status(notionRes.status).json(data);
+    if (action === 'create') {
+      if (!dbId) return res.status(400).json({ error: 'database required' });
+      if (uid != null) properties[TG_COL] = { number: uid };
+      const r = await notion(token, '/pages', 'POST', { parent: { database_id: dbId }, properties });
+      return res.status(r.status).json(r.data);
+    }
 
+    if (action === 'update' || action === 'archive') {
+      if (!pageId || !/^[0-9a-f-]{32,36}$/i.test(String(pageId))) return res.status(400).json({ error: 'pageId required' });
+      if (uid != null) {
+        // змінювати можна тільки свої записи з наших баз
+        const page = await notion(token, `/pages/${pageId}`, 'GET');
+        if (page.status !== 200) return res.status(page.status).json(page.data);
+        const parent = page.data.parent && page.data.parent.database_id;
+        const allowed = Object.values(DB_WHITELIST).filter(Boolean).map(norm);
+        if (!parent || !allowed.includes(norm(parent))) return res.status(403).json({ error: 'Немає доступу до цього запису' });
+        const ownerProp = page.data.properties && page.data.properties[TG_COL];
+        if (!ownerProp || ownerProp.number !== uid) return res.status(403).json({ error: 'Немає доступу до цього запису' });
+        if (action === 'update') properties[TG_COL] = { number: uid };
+      }
+      const payload = action === 'archive' ? { archived: true } : { properties };
+      const r = await notion(token, `/pages/${pageId}`, 'PATCH', payload);
+      return res.status(r.status).json(r.data);
+    }
+
+    return res.status(400).json({ error: 'Unknown action: ' + action });
   } catch (e) {
     return res.status(500).json({ error: e.message || 'Internal error' });
   }

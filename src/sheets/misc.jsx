@@ -9,6 +9,7 @@ import { Avatar, Field, Segmented, Switch, TextInput, KV, IconTile } from '../ui
 import { CURRENCIES, SYM, CUR_NAME, parseAmount } from '../lib/money.js'
 import { monthKeyOf, today, toISO } from '../lib/dates.js'
 import { haptic } from '../lib/telegram.js'
+import { getAuthMode } from '../lib/notion/api.js'
 
 export function QuickAddSheet({ sheetId, closing }) {
   const modules = useStore(s => s.settings.modules)
@@ -51,6 +52,7 @@ export function SettingsSheet({ sheetId, closing }) {
   const sync = useStore(st => st.sync)
   const data = useStore(st => st.data)
   const platform = useStore(st => st.platform)
+  const authMode = useStore(st => (st.finance.status && st.finance.status.auth) || null) || getAuthMode()
   const counts = { c: data.clients.length, w: data.workEntries.length, g: data.goals.length, a: data.assets.length }
   const r = s.rates
   const [busy, setBusy] = useState(false)
@@ -99,7 +101,18 @@ export function SettingsSheet({ sheetId, closing }) {
         <Switch on={s.modules.work} onChange={v => setModule('work', v)} label="Робота" sub="Години, підробітки, виплати" icon={<IconTile icon={Icon.briefcase} />} />
         <Switch on={s.modules.goals} onChange={v => setModule('goals', v)} label="Цілі" sub="Накопичення з рівнями" icon={<IconTile icon={Icon.target} color="var(--pos)" bg="var(--pos-soft)" />} />
         <Switch on={s.modules.assets} onChange={v => setModule('assets', v)} label="Активи" sub="Криптопортфель, ціни CoinGecko" icon={<IconTile icon={Icon.coins} color="var(--warn)" bg="var(--warn-soft)" />} />
+        <Switch on={s.modules.accounts} onChange={v => setModule('accounts', v)} label="Рахунки" sub="Монобанк, польські банки, біржі" icon={<IconTile icon={Icon.bank} color="var(--blue)" bg="var(--blue-soft)" />} />
       </div>
+
+      <div className="label" style={{ margin: '22px 2px 10px' }}>Безпека й підключення</div>
+      <button className="card pressable row" style={{ width: '100%', textAlign: 'left' }} onClick={() => openSheet('integrations')}>
+        <IconTile icon={Icon.shield} color={authMode === 'on' ? 'var(--pos)' : 'var(--warn)'} bg={authMode === 'on' ? 'var(--pos-soft)' : 'var(--warn-soft)'} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600 }}>{authMode === 'on' ? 'Дані захищені' : authMode === 'off' ? 'Захист даних вимкнено' : 'Захист даних'}</div>
+          <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{authMode === 'on' ? 'Підпис Telegram · банки й біржі' : 'Додай TG_BOT_TOKEN у Vercel — покажу як'}</div>
+        </div>
+        <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />
+      </button>
 
       {s.modules.work && (
         <>

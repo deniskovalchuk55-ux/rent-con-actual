@@ -11,7 +11,7 @@ const SCHEMAS = {
   DB_GOAL_TX: { 'ID': 'title', 'Ціль': 'relation', 'Дата': 'date', 'Сума': 'number', 'Валюта': 'select', 'Тип': 'select', 'Опис': 'rich_text', 'Telegram ID': 'number' },
   DB_ASSETS: { 'Символ': 'title', 'Назва': 'rich_text', 'CoinGecko ID': 'rich_text', 'Тип': 'select', 'Іконка': 'rich_text', 'Telegram ID': 'number' },
   DB_ASSET_TX: { 'ID': 'title', 'Актив': 'relation', 'Дата': 'date', 'Тип': 'select', 'Кількість': 'number', 'Ціна': 'number', 'Валюта': 'select', 'Комісія': 'number', 'Опис': 'rich_text', 'Telegram ID': 'number' },
-  DB_EXPENSES: { 'Назва': 'title', 'Сума': 'number', 'Валюта': 'select', 'Дата': 'date', 'Категорія': 'relation', 'Опис': 'rich_text', 'Telegram ID': 'number' },
+  DB_EXPENSES: { 'Назва': 'title', 'Сума': 'number', 'Валюта': 'select', 'Дата': 'date', 'Категорія': 'relation', 'Опис': 'rich_text', 'Telegram ID': 'number', 'Банк ID': 'rich_text' },
   DB_CAT_EXPENSES: { 'Назва': 'title', 'Загальна': 'checkbox', 'Telegram ID': 'number' },
 }
 
@@ -174,18 +174,27 @@ function cgHandle(body) {
     for (const id of String(query.ids).split(',')) { const c = COINS.find(x => x.id === id); if (c) out[id] = { usd: c.price, usd_24h_change: c.ch } }
     return out
   }
+  if (path === '/coins/markets') {
+    return String(query.ids || '').split(',').map(id => COINS.find(x => x.id === id)).filter(Boolean)
+      .map(c => ({ id: c.id, symbol: c.symbol, name: c.name, image: c.thumb, current_price: c.price, price_change_percentage_24h: c.ch }))
+  }
   const m = path.match(/^\/coins\/([a-z0-9-]+)\/market_chart$/)
   if (m) return { prices: history(m[1], parseInt(query.days, 10) || 30) }
   return {}
 }
 
-export function installFakeBackend(fake, { user = { id: 111, first_name: 'Андрій', username: 'andrii' } } = {}) {
+export function installFakeBackend(fake, { user = { id: 111, first_name: 'Андрій', username: 'andrii' }, finance = null } = {}) {
   const realFetch = window.fetch.bind(window)
   window.fetch = async (url, opts = {}) => {
     const u = String(url)
-    const json = (status, data) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
+    // X-RC-Auth: on — у демо захист «увімкнений», як після налаштування TG_BOT_TOKEN
+    const json = (status, data) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'X-RC-Auth': 'on' } })
     if (u.includes('/api/notion')) {
       const [status, data] = await fake.handle(JSON.parse(opts.body || '{}'))
+      return json(status, data)
+    }
+    if (u.includes('/api/finance') && finance) {
+      const [status, data] = await finance.handle(JSON.parse(opts.body || '{}'))
       return json(status, data)
     }
     if (u.includes('/api/coingecko')) {
@@ -213,4 +222,5 @@ export function installFakeBackend(fake, { user = { id: 111, first_name: 'Анд
     },
   }
   window.__fake = fake
+  window.__finance = finance
 }
