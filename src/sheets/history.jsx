@@ -8,10 +8,10 @@ import { Chips, Empty, IconTile } from '../ui/kit.jsx'
 import { MonthBars } from '../ui/charts.jsx'
 import { haptic } from '../lib/telegram.js'
 import { ledgerReady, enableHistory, runBackfill } from '../state/finance.js'
-import { monthlyFlows, flowSummary, groupByDay, ledgerAccounts, rowUSD, timeOf } from '../lib/domain/ledger.js'
+import { monthlyFlows, flowSummary, groupByDay, ledgerAccounts, rowUSD, timeOf, searchLedger, recurringPayments } from '../lib/domain/ledger.js'
 import { CG_IDS } from '../lib/domain/finance.js'
 import { fmtQty } from '../lib/domain/capital.js'
-import { fmtRelDay, monthKeyOf, monthKeyLabel, shiftMonthKey, parseDate } from '../lib/dates.js'
+import { fmtRelDay, fmtDateShort, monthKeyOf, monthKeyLabel, shiftMonthKey, parseDate } from '../lib/dates.js'
 
 const FIAT = new Set(['USD', 'UAH', 'PLN', 'EUR', 'GBP', 'CHF', 'CZK'])
 const KIND_ICON = {
@@ -47,6 +47,7 @@ export function HistorySheet({ sheetId, closing, source: initialSource }) {
   const [source, setSource] = useState(initialSource || 'all')
   const [month, setMonth] = useState(nowKey)
   const [busy, setBusy] = useState(false)
+  const [q, setQ] = useState('')
   const ready = ledgerReady(fin.status)
 
   const coinPrice = c => { const meta = fin.coinMeta[CG_IDS[c]]; return meta && meta.price ? meta.price : null }
@@ -56,7 +57,9 @@ export function HistorySheet({ sheetId, closing, source: initialSource }) {
   const from = new Date(y, mo - 1, 1).getTime()
   const to = new Date(y, mo, 1).getTime()
   const sum = flowSummary(rows, from, to, rates, coinPrice, { source })
-  const days = groupByDay(rows, from, to, source)
+  const found = useMemo(() => (q.trim() ? searchLedger(rows, q, source) : null), [rows, q, source])
+  const days = found ? groupByDay(found, 0, Infinity, 'all') : groupByDay(rows, from, to, source)
+  const foundSum = found ? found.reduce((acc, r) => { const v = rowUSD(r, rates, coinPrice); if (v >= 0) acc.in += v; else acc.out -= v; return acc }, { in: 0, out: 0 }) : null
   const selIdx = series.findIndex(x => x.key === month)
   const bf = fin.backfill
   const go = delta => { haptic.select(); setMonth(k => { const n = shiftMonthKey(k, delta); return n > nowKey ? k : n }) }
@@ -96,7 +99,20 @@ export function HistorySheet({ sheetId, closing, source: initialSource }) {
         </div>
       )}
 
-      {bf && (bf.running || bf.error) && (
+      <div style={{ position: 'relative', marginBottom: 12 }}>
+        <Icon.search style={{ position: 'absolute', left: 14, top: 14, width: 20, color: 'var(--text-3)' }} />
+        <input className="input" style={{ paddingLeft: 44, paddingRight: q ? 44 : 14, height: 48 }} placeholder="Пошук: назва, сума, коментар" value={q} onChange={e => setQ(e.target.value)} aria-label="Пошук в історії" />
+        {q && <button className="icon-btn" style={{ position: 'absolute', right: 6, top: 6, width: 36, height: 36 }} onClick={() => setQ('')} aria-label="Очистити пошук"><Icon.close /></button>}
+      </div>
+
+      {found && (
+        <div className="card row" style={{ justifyContent: 'space-between', padding: '12px 14px', marginBottom: 4 }}>
+          <span className="muted" style={{ fontSize: 14 }}>Знайдено {found.length} за {rows.length ? 'рік' : 'період'}</span>
+          <span className="num" style={{ fontSize: 14, fontWeight: 650 }}>{foundSum.in > 0.005 && <span className="pos">+{m.fmt(foundSum.in)} </span>}{foundSum.out > 0.005 && <>−{m.fmt(foundSum.out)}</>}</span>
+        </div>
+      )}
+
+      {!found && bf && (bf.running || bf.error) && (
         <div className="card row" style={{ gap: 10, marginBottom: 12, padding: '12px 14px' }}>
           <Icon.refresh className={bf.running ? 'spin' : ''} style={{ width: 16, color: 'var(--text-2)', flexShrink: 0 }} />
           <div className="muted" style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
@@ -106,7 +122,7 @@ export function HistorySheet({ sheetId, closing, source: initialSource }) {
         </div>
       )}
 
-      <div className="card">
+      {!found && <div className="card">
         <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
           <button className="icon-btn" onClick={() => go(-1)} aria-label="Попередній місяць"><Icon.chevronLeft /></button>
           <div style={{ fontWeight: 700, fontSize: 17 }}>{monthKeyLabel(month)}</div>
@@ -135,7 +151,7 @@ export function HistorySheet({ sheetId, closing, source: initialSource }) {
           <span><i className="dot" style={{ background: 'var(--pos)' }} />Надійшло</span>
           <span><i style={{ width: 12, height: 2.5, borderRadius: 2, background: 'var(--neg)', display: 'inline-block' }} />Пішло</span>
         </div>
-      </div>
+      </div>}
 
       {loaded !== true && !rows.length ? (
         <div className="stack" style={{ marginTop: 14 }}>{[0, 1, 2].map(i => <div key={i} className="sk" style={{ height: 58, borderRadius: 16 }} />)}</div>
@@ -165,10 +181,57 @@ export function HistorySheet({ sheetId, closing, source: initialSource }) {
         </div>
       )) : (
         <div className="card" style={{ marginTop: 14 }}>
-          <Empty icon={Icon.list} title="Операцій немає" text={bf && bf.running && month < nowKey ? 'Цей місяць ще підтягується з банку.' : 'За цей місяць тут нічого не записано.'} />
+          {found ? <Empty icon={Icon.search} title="Нічого не знайдено" text="Спробуй іншу назву або суму." />
+            : <Empty icon={Icon.list} title="Операцій немає" text={bf && bf.running && month < nowKey ? 'Цей місяць ще підтягується з банку.' : 'За цей місяць тут нічого не записано.'} />}
         </div>
       )}
       <div style={{ height: 6 }} />
+    </Sheet>
+  )
+}
+
+/* ===== Регулярні платежі: підписки, звʼязок, щомісячні перекази ===== */
+export function RecurringSheet({ sheetId, closing }) {
+  const rows = useStore(s => s.data.ledger)
+  const rates = useStore(s => s.settings.rates)
+  const m = useMoney()
+  const list = useMemo(() => recurringPayments(rows, rates), [rows, rates])
+  const total = list.reduce((acc, x) => acc + x.usd, 0)
+  const upcoming = [...list].sort((a, b) => a.nextDate - b.nextDate)
+  const manyAccounts = new Set(list.map(x => x.account)).size > 1
+  return (
+    <Sheet sheetId={sheetId} closing={closing} title="Регулярні платежі">
+      {list.length ? (
+        <>
+          <div className="card">
+            <div className="label">Щомісяця приблизно</div>
+            <div className="display num" style={{ fontSize: 34, marginTop: 6 }}>{m.fmt(total)}</div>
+            <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>{list.length} {list.length === 1 ? 'платіж' : list.length < 5 ? 'платежі' : 'платежів'} · за рік ≈ {m.fmt(total * 12)}</div>
+          </div>
+          <div className="label" style={{ margin: '18px 4px 8px' }}>Найближчі списання</div>
+          <div className="list">
+            {upcoming.map(x => {
+              const Ic = x.kind === 'transfer' ? Icon.repeat : Icon.wallet
+              return (
+                <div key={x.key + x.currency} className="list-row static">
+                  <IconTile icon={Ic} color={x.kind === 'transfer' ? 'var(--blue)' : 'var(--text)'} bg={x.kind === 'transfer' ? 'var(--blue-soft)' : 'var(--card-3)'} />
+                  <div className="main">
+                    <div className="title ellipsis">{x.title}</div>
+                    <div className="meta ellipsis">наступне {fmtDateShort(new Date(x.nextDate))}{x.nextDate < Date.now() ? ' (мало бути)' : ''} · ~{x.day}-го{manyAccounts ? ' · ' + x.account : ''}</div>
+                  </div>
+                  <div className="end">
+                    <div className="amount">−{FIAT.has(x.currency) ? m.native(x.amount, x.currency) : fmtQty(x.amount) + ' ' + x.currency}</div>
+                    {x.currency !== m.display && <div className="meta num">{m.fmt(x.usd)}</div>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div className="muted" style={{ fontSize: 12.5, margin: '12px 4px 6px', lineHeight: 1.45 }}>Знаходжу в історії те, що списувалось щонайменше три місяці приблизно на ту саму суму. Покупки, які трапляються кілька разів на місяць, сюди не потрапляють.</div>
+        </>
+      ) : (
+        <div className="card"><Empty icon={Icon.repeat} title="Поки не видно" text="Потрібна історія щонайменше за три місяці — тоді тут зʼявляться підписки, звʼязок і щомісячні перекази." /></div>
+      )}
     </Sheet>
   )
 }

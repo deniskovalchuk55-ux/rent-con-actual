@@ -11,7 +11,7 @@ function mulberry(seed) {
   return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
 }
 const SHOPS = [['Сільпо', 5411, 300, 1400], ['АТБ', 5411, 150, 700], ['Bolt.eu', 4121, 120, 380], ['Пузата Хата', 5812, 180, 420], ['Аптека Подорожник', 5912, 90, 650],
-  ['Netflix.com', 4899, 389, 389], ['ZARA', 5651, 900, 2600], ['Kyivstar', 4814, 250, 250], ['WOG', 5541, 900, 1800], ['Rozetka', 5732, 400, 4200]]
+  ['ZARA', 5651, 900, 2600], ['WOG', 5541, 900, 1800], ['Rozetka', 5732, 400, 4200]]
 export const DEMO_ACCOUNTS = { uah: { label: 'Чорна картка •4821', cur: 'UAH', ref: 'card-uah' }, usd: { label: 'Біла картка •0377', cur: 'USD', ref: 'card-usd' }, eur: { label: 'Біла картка •9012', cur: 'EUR', ref: 'card-eur' } }
 const EUR_USD = 1.08
 const TYPE_NAME = { income: 'Надходження', expense: 'Покупка', transfer: 'Переказ', cash: 'Готівка', deposit: 'Поповнення біржі', withdrawal: 'Виведення з біржі' }
@@ -43,6 +43,9 @@ export function demoLedger(now = new Date()) {
     const n = 16 + Math.floor(r() * 12)
     for (let j = 0; j < n; j++) { const [t, mcc, lo, hi] = SHOPS[Math.floor(r() * SHOPS.length)]; mono('uah', at(1 + Math.floor(r() * dim), 9 + Math.floor(r() * 12)), t, mcc, -Math.round(lo + r() * (hi - lo))) }
     mono('uah', at(6, 11), 'На банку «Відпустка»', 4829, -2000)
+    mono('uah', at(12, 7), 'Netflix.com', 4899, -389)
+    mono('uah', at(22, 8), 'Spotify', 5815, -199)
+    mono('uah', at(3, 9), 'Kyivstar', 4814, -250)
     if (r() > 0.5) mono('uah', at(14, 13), 'Банкомат ПриватБанк', 6011, -1000 - Math.round(r() * 2) * 500)
     if (r() > 0.6) mono('uah', at(18, 20), 'Переказ на картку', 4829, -1500 - Math.round(r() * 3) * 500, 'Сергій П.')
     mono('usd', at(3, 16), 'Upwork Escrow', 4829, 750 + Math.round(r() * 300))

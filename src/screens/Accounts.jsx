@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../state/store.js'
 import { openSheet } from '../state/ui.js'
 import { refreshBalances, anyProvider, canSeeBanks, ledgerReady, enableHistory } from '../state/finance.js'
-import { flowSummary } from '../lib/domain/ledger.js'
+import { flowSummary, recurringPayments } from '../lib/domain/ledger.js'
+import { fmtDateShort } from '../lib/dates.js'
 import { useMoney, Money } from '../ui/money.jsx'
 import { Icon } from '../ui/icons.jsx'
 import { Empty, Skeleton, Section, IconTile } from '../ui/kit.jsx'
@@ -121,6 +122,9 @@ function HistoryCard() {
   const now = new Date()
   const s = flowSummary(rows, new Date(now.getFullYear(), now.getMonth(), 1).getTime(), Date.now() + 1, rates)
   const bf = fin.backfill
+  const rec = recurringPayments(rows, rates)
+  const recTotal = rec.reduce((acc, x) => acc + x.usd, 0)
+  const nextRec = rec.filter(x => x.nextDate >= Date.now() - 864e5).sort((a, b) => a.nextDate - b.nextDate)[0]
   return (
     <Section title="Історія">
       <button className="card pressable row" style={{ width: '100%', textAlign: 'left', gap: 12 }} onClick={() => { haptic.tap(); openSheet('history', {}) }}>
@@ -133,6 +137,16 @@ function HistoryCard() {
         </div>
         <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />
       </button>
+      {rec.length > 0 && (
+        <button className="card pressable row" style={{ width: '100%', textAlign: 'left', gap: 12, marginTop: 10 }} onClick={() => { haptic.tap(); openSheet('recurring', {}) }}>
+          <IconTile icon={Icon.repeat} color="var(--blue)" bg="var(--blue-soft)" />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 650 }}>Регулярні платежі · <span className="num">{m.fmt(recTotal)}</span>/міс</div>
+            <div className="muted ellipsis" style={{ fontSize: 13, marginTop: 2 }}>{nextRec ? <>Наступне: {nextRec.title}, {fmtDateShort(new Date(nextRec.nextDate))}</> : <>{rec.length} підписок і платежів</>}</div>
+          </div>
+          <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />
+        </button>
+      )}
     </Section>
   )
 }
