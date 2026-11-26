@@ -657,6 +657,23 @@ const lib = p => path.join(ROOT, 'api', p);
     notionOpts.parentAccess = true;
     assert.strictEqual(r.statusCode, 409); assert.ok(/Connections/.test(r.body.error), r.body.error); assert.strictEqual(createdDbs.size, 0);
   });
+  await test('ledger: base created by hand as «Рух коштів» (title column «Name») is found; missing columns added', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin(); notionOpts.parentAccess = false;
+    const id = uuid();
+    createdDbs.set(id, { id, title: [{ plain_text: 'Рух коштів' }], properties: { 'Name': { type: 'title', title: {} }, 'Сума': { type: 'number', number: {} } }, parent: { type: 'workspace' } });
+    dbSchemas[id] = createdDbs.get(id).properties;
+    const r = await call(h, { user: { id: OWNER }, body: { action: 'ledger-setup' } });
+    notionOpts.parentAccess = true;
+    assert.strictEqual(r.statusCode, 200, JSON.stringify(r.body)); assert.strictEqual(r.body.id, id); assert.strictEqual(r.body.created, false);
+    const props = createdDbs.get(id).properties;
+    for (const col of ['Валюта', 'USD', 'Дата', 'Тип', 'Рахунок', 'Опис', 'Банк ID', 'Telegram ID']) assert.ok(props[col], col);
+    // запис іде в колонку-заголовок «Name»
+    const w = await call(h, { user: { id: OWNER }, body: { action: 'ledger-write', items: [{ bankId: 'mono:hand-1', title: 'Сільпо', amount: -100, currency: 'UAH', usd: -2.4, date: new Date().toISOString(), kind: 'expense', account: 'Чорна картка •1234', note: '' }] } });
+    assert.strictEqual(w.body.created, 1, JSON.stringify(w.body));
+    const row = [...pages.values()].find(p => p.parent.database_id === id.replace(/-/g, ''));
+    assert.ok(row && row.properties['Name'] && row.properties['Name'].title[0].plain_text === 'Сільпо', JSON.stringify(row && row.properties));
+    createdDbs.delete(id); for (const [pid, pg] of pages) if (pg.parent.database_id === id.replace(/-/g, '')) pages.delete(pid);
+  });
   await test('ledger: setup creates «Рух коштів» next to the app databases; later found by title', async () => {
     freshEnv(ENV_FIN); let h = reloadFin();
     const before = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
