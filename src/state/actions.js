@@ -739,3 +739,18 @@ export function deleteAsset(assetRef) {
     error: 'Не вдалось видалити актив',
   })
 }
+
+/* ===== Підказки «схоже на оплату» й ліміти витрат ===== */
+export function skipRentMatch(id) {
+  if (!id) return
+  updateSettings(s => ({ rentMatchSkip: [...(s.rentMatchSkip || []).filter(x => x !== id), id].slice(-40) }))
+}
+
+export function setBudget(catId, amount, cur) {
+  updateSettings(s => {
+    const b = { ...(s.budgets || {}) }
+    if (amount > 0) b[catId] = { amount: Math.round(amount * 100) / 100, cur }
+    else delete b[catId]
+    return { budgets: b }
+  })
+}

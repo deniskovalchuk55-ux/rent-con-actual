@@ -49,6 +49,12 @@ export function demoLedger(now = new Date()) {
     if (r() > 0.5) mono('uah', at(14, 13), 'Банкомат ПриватБанк', 6011, -1000 - Math.round(r() * 2) * 500)
     if (r() > 0.6) mono('uah', at(18, 20), 'Переказ на картку', 4829, -1500 - Math.round(r() * 3) * 500, 'Сергій П.')
     mono('usd', at(3, 16), 'Upwork Escrow', 4829, 750 + Math.round(r() * 300))
+    if (i === 0) {
+      // свіжі оплати від клієнтів оренди — для підказок «схоже на оплату»
+      const ago = n => new Date(Date.now() - n * 864e5)
+      mono('uah', ago(2), 'Від: ТОВ «Мотор Сервіс»', 4829, 1200, 'за лендінг')
+      mono('uah', ago(1), 'Від: Борода Барбер', 4829, 900)
+    }
     mono('usd', at(12, 9), 'Apple.com/bill', 5818, -9.99)
     if (r() > 0.5) mono('eur', at(15, 14), 'Booking.com', 4722, -Math.round(60 + r() * 140))
     ex('bybit', at(8, 12), 'in', 'USDT', 300, 'TRC20')

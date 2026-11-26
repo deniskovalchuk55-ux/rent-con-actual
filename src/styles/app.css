@@ -537,3 +537,11 @@ input[type='date'].input::-webkit-date-and-time-value { text-align: left; }
 .fc-box .kv { padding: 6px 0; font-size: 13.5px; }
 .fc-box .kv .k { color: var(--text-2); }
 @keyframes fade-in { from { opacity: 0; transform: translateY(-4px) } to { opacity: 1; transform: none } }
+
+/* ліміти витрат */
+.budget-row { padding: 14px 16px; }
+.budget-row + .budget-row { border-top: 1px solid var(--line); }
+.budget-input { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.budget-input .input { width: 104px; height: 40px; text-align: right; padding: 0 10px; font-size: 15px; }
+.budget-lines .kv { display: block; }
+.budget-lines .kv .row { justify-content: space-between; }

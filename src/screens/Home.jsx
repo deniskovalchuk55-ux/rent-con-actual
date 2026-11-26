@@ -15,7 +15,9 @@ import { monthKeyOf, toISO, today, UA_MONTHS, plural } from '../lib/dates.js'
 import { haptic } from '../lib/telegram.js'
 import { flowSummary } from '../lib/domain/ledger.js'
 import { monthForecast } from '../lib/domain/forecast.js'
-import { CG_IDS } from '../lib/domain/finance.js'
+import { RentMatches } from './RentMatches.jsx'
+import { budgetColor } from '../sheets/budgets.jsx'
+import { CG_IDS, financeTotals } from '../lib/domain/finance.js'
 import { ledgerReady } from '../state/finance.js'
 
 export const STREAM = {
@@ -108,11 +110,12 @@ export default function Home() {
             ))}
           </div>
 
+          {modules.rent && <RentMatches title="Схоже на оплату оренди" />}
           {modules.rent && <DueSection clients={d.clients} />}
           {modules.work && <WorkCard d={d} />}
           <ReportSection d={d} settings={settings} />
           <TrendSection d={d} mode={mode} rates={rates} />
-          {(modules.goals || modules.assets) && <CapitalMini d={d} modules={modules} />}
+          {(modules.goals || modules.assets || modules.accounts) && <CapitalMini d={d} modules={modules} />}
         </div>
       )}
     </div>
@@ -285,9 +288,49 @@ function ReportSection({ d, settings }) {
         {expLoaded === 'error' ? <div className="muted" style={{ fontSize: 14 }}>База витрат (Expense·Control) недоступна</div>
           : exp.length ? <ShareBars items={exp.slice(0, 8).map((e, i) => ({ id: e.id, label: e.name, value: e.usd, color: PALETTE[(i + 3) % PALETTE.length] }))} total={s.spent} format={v => m.fmt(v)} />
             : <div className="muted" style={{ fontSize: 14 }}>За цей період витрат не було</div>}
+        {overview.kind === 'month' && expLoaded !== 'error' && <BudgetLines exp={exp} />}
         {modules.accounts && <AccountsFlows from={from} to={to} />}
       </div>
     </Section>
+  )
+}
+
+// Ліміти категорій на місяць звіту: скільки з межі вже витрачено
+function BudgetLines({ exp }) {
+  const m = useMoney()
+  const budgets = useStore(s => s.settings.budgets) || {}
+  const cats = useStore(s => s.data.expenseCats)
+  const ids = Object.keys(budgets).filter(id => cats.some(c => c.id === id))
+  if (!ids.length) {
+    return exp.length ? <button className="link" style={{ fontSize: 13.5, marginTop: 10 }} onClick={() => openSheet('budgets')}>Поставити ліміти на категорії</button> : null
+  }
+  const spent = Object.fromEntries(exp.map(e => [e.id, e.usd]))
+  const rows = ids.map(id => {
+    const b = budgets[id]
+    const limit = m.toUSD(b.amount, b.cur)
+    const v = spent[id] || 0
+    return { id, name: (cats.find(c => c.id === id) || {}).name, v, limit, p: limit > 0 ? v / limit : 0 }
+  }).sort((a, b) => b.p - a.p)
+  const over = rows.filter(r => r.p > 1).length
+  return (
+    <>
+      <div className="divider" />
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
+        <div className="label">Ліміти{over ? <span className="neg"> · {over} перевищено</span> : null}</div>
+        <button className="link" onClick={() => openSheet('budgets')}>Змінити</button>
+      </div>
+      <div className="stack" style={{ gap: 12, marginTop: 6 }}>
+        {rows.map(r => (
+          <div key={r.id}>
+            <div className="row" style={{ justifyContent: 'space-between', fontSize: 14, marginBottom: 6 }}>
+              <span className="ellipsis" style={{ minWidth: 0 }}>{r.name}</span>
+              <span className="num" style={{ fontWeight: 650, color: r.p > 1 ? 'var(--neg)' : undefined, flexShrink: 0 }}>{m.fmt(r.v)} <span className="faint" style={{ fontWeight: 500 }}>з {m.fmt(r.limit)}</span></span>
+            </div>
+            <Bar thin value={r.p} color={budgetColor(r.p)} />
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 
@@ -364,12 +407,27 @@ function TrendSection({ d, mode, rates }) {
 
 function CapitalMini({ d, modules }) {
   const m = useMoney()
+  const fin = useStore(s => s.finance)
+  const rates = useStore(s => s.settings.rates)
   const goalsSaved = d.goals.filter(g => g.status !== 'closed').reduce((s, g) => s + m.toUSD(g.saved, g.cur), 0)
   const active = d.goals.filter(g => g.status === 'active').sort((a, b) => b.pct - a.pct)[0]
-  const value = d.assets.reduce((s, a) => s + a.valueUSD, 0)
+  const value = modules.assets ? d.assets.reduce((s, a) => s + a.valueUSD, 0) : 0
   const pnl = d.assets.reduce((s, a) => s + a.pnlUSD, 0)
+  // усе разом: картки й біржі (наживо) + монети, записані вручну; цілі — частина цих грошей, тож не додаються
+  const acc = modules.accounts && (fin.providers || []).length ? financeTotals(fin.providers, rates) : null
+  const total = (acc ? acc.totalUSD : 0) + value
   return (
     <Section title="Капітал" action={<button className="link" onClick={() => setTab('capital')}>Відкрити</button>}>
+      {acc && (
+        <div className="card pressable" style={{ marginBottom: 10 }} onClick={() => setTab('capital')}>
+          <div className="label">Усе разом</div>
+          <div className="display num" style={{ fontSize: 30, marginTop: 6 }}>{m.fmt(total)}</div>
+          <div className="muted num" style={{ fontSize: 13, marginTop: 6 }}>
+            Картки {m.fmt(acc.banksUSD)} · біржі {m.fmt(acc.exchangesUSD)}{value > 0 ? <> · монети вручну {m.fmt(value)}</> : null}
+            {goalsSaved > 0 ? <> · з них на цілях {m.fmt(goalsSaved)}</> : null}
+          </div>
+        </div>
+      )}
       <div className="grid-2">
         {modules.goals && (
           <div className="kpi pressable" onClick={() => setTab('capital')}>

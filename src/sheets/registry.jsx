@@ -7,6 +7,7 @@ import { GoalSheet, GoalFormSheet, GoalTxSheet, LevelUpSheet, PickGoalSheet, Ass
 import { QuickAddSheet, ConfirmSheet, SettingsSheet, RatesSheet } from './misc.jsx'
 import { IntegrationsSheet, MonoImportSheet } from './finance.jsx'
 import { HistorySheet, RecurringSheet } from './history.jsx'
+import { BudgetsSheet } from './budgets.jsx'
 
 const MAP = {
   client: ClientSheet, clientForm: ClientFormSheet, pay: PaySheet, pickClient: PickClientSheet,
@@ -14,7 +15,7 @@ const MAP = {
   goal: GoalSheet, goalForm: GoalFormSheet, goalTx: GoalTxSheet, levelUp: LevelUpSheet, pickGoal: PickGoalSheet,
   asset: AssetSheet, assetSearch: AssetSearchSheet, assetTx: AssetTxSheet,
   quickAdd: QuickAddSheet, confirm: ConfirmSheet, settings: SettingsSheet, rates: RatesSheet,
-  integrations: IntegrationsSheet, monoImport: MonoImportSheet, history: HistorySheet, recurring: RecurringSheet,
+  integrations: IntegrationsSheet, monoImport: MonoImportSheet, history: HistorySheet, recurring: RecurringSheet, budgets: BudgetsSheet,
 }
 
 export function SheetHost() {

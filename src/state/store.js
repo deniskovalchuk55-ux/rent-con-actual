@@ -26,6 +26,8 @@ export const defaultSettings = () => ({
   overview: { kind: 'month', anchor: toISO(today()) },
   workView: 'calendar',
   clientSort: 'urgency',
+  rentMatchSkip: [], // надходження, які вже зараховано або позначено «не те»
+  budgets: {},       // місячні ліміти витрат: id категорії → { amount, cur }
   rates: { UAH: 41, PLN: 4, auto: true, source: null, updated: null },
   updatedAt: 0,
 })
