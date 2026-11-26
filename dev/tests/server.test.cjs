@@ -149,6 +149,10 @@ const lib = p => path.join(ROOT, 'api', p);
   await test('telegram: expired initData fails', () => {
     const v = tg.verifyInitData(initDataFor({ id: OWNER }, { authDate: Math.floor(Date.now() / 1000) - 8 * 86400 }), BOT);
     assert.strictEqual(v.ok, false); assert.strictEqual(v.reason, 'expired');
+    process.env.TG_BOT_TOKEN = BOT;
+    const a = tg.authFromRequest({ headers: { 'x-telegram-init-data': initDataFor({ id: OWNER }, { authDate: Math.floor(Date.now() / 1000) - 8 * 86400 }) } });
+    delete process.env.TG_BOT_TOKEN;
+    assert.strictEqual(a.status, 401); assert.ok(/застаріла/.test(a.error), a.error);
   });
   await test('telegram: hash computed without signature field also accepted', () => {
     const fields = { auth_date: String(Math.floor(Date.now() / 1000)), user: JSON.stringify({ id: OWNER }), signature: 'zzz' };
@@ -300,6 +304,16 @@ const lib = p => path.join(ROOT, 'api', p);
     freshEnv(ENV_FIN); const h = reloadFin();
     const r = await call(h, { user: { id: OTHER }, body: { action: 'balances' } });
     assert.strictEqual(r.statusCode, 403);
+  });
+  await test('finance: status hides which banks are connected from other users, shows owner', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin();
+    const other = await call(h, { user: { id: OTHER }, body: { action: 'status' } });
+    assert.strictEqual(other.statusCode, 200); assert.strictEqual(other.body.owner, false);
+    assert.deepStrictEqual(other.body.providers, {});
+    const own = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    assert.strictEqual(own.body.owner, true); assert.strictEqual(own.body.providers.mono, true);
+    const anon = await call(h, { body: { action: 'status' } });
+    assert.strictEqual(anon.statusCode, 401);
   });
   await test('finance: owner gets Monobank balances (own money without credit limit, jars)', async () => {
     freshEnv(ENV_FIN); const h = reloadFin();

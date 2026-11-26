@@ -16,11 +16,14 @@ function errOut(e) {
 
 function status(auth) {
   const env = process.env;
+  const owner = auth.mode === 'on' ? isOwner(auth.userId) : false;
+  // іншим користувачам застосунку не розповідаємо, які банки й біржі підключив власник
+  const hide = auth.mode === 'on' && !owner;
   return {
     auth: auth.mode,
-    owner: auth.mode === 'on' ? isOwner(auth.userId) : false,
+    owner,
     setup: { bot: !!env.TG_BOT_TOKEN, owner: !!ownerId(), expensesDb: !!env.DB_EXPENSES, categoriesDb: !!env.DB_CAT_EXPENSES },
-    providers: {
+    providers: hide ? {} : {
       mono: !!env.MONO_TOKEN,
       bybit: EXCHANGES.bybit.configured(),
       bingx: EXCHANGES.bingx.configured(),

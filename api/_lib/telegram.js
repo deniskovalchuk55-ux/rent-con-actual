@@ -41,7 +41,10 @@ function authFromRequest(req) {
   const token = process.env.TG_BOT_TOKEN;
   if (!token) return { mode: 'off', ok: true, userId: null };
   const v = verifyInitData(req.headers['x-telegram-init-data'], token);
-  if (!v.ok) return { mode: 'on', ok: false, status: 401, error: 'Відкрий застосунок через бота в Telegram', reason: v.reason };
+  if (!v.ok) {
+    const error = v.reason === 'expired' ? 'Сесія Telegram застаріла — закрий застосунок і відкрий знову' : 'Відкрий застосунок через бота в Telegram';
+    return { mode: 'on', ok: false, status: 401, error, reason: v.reason };
+  }
   const allowed = parseIds(process.env.ALLOWED_TG_IDS);
   if (allowed.length && !allowed.includes(v.userId)) return { mode: 'on', ok: false, status: 403, error: 'Немає доступу', reason: 'not-allowed' };
   return { mode: 'on', ok: true, userId: v.userId, user: v.user };

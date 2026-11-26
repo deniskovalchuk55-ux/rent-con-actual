@@ -80,6 +80,9 @@ export function IntegrationsSheet({ sheetId, closing }) {
           )}
         </Block>
 
+        {st && st.auth === 'on' && st.setup && st.setup.owner && !st.owner ? (
+          <div className="card"><Empty icon={Icon.bank} title="Рахунки бачить лише власник" text="Ключі банків і бірж належать іншому Telegram-акаунту." /></div>
+        ) : <>
         <Block badge="mono" title="Монобанк" status={statusOf('mono')}>
           {!configured('mono') ? (
             <ol className="howto">
@@ -121,6 +124,7 @@ export function IntegrationsSheet({ sheetId, closing }) {
         <Block badge="enablebanking" title="Польські банки" status={<Status text="наступний етап" />}>
           <div className="muted" style={{ fontSize: 13.5, marginTop: 10 }}>PKO, mBank, Pekao, Santander, Revolut та інші — через Enable Banking (офіційний PSD2, безкоштовно для власних рахунків). Підключаю наступним кроком.</div>
         </Block>
+        </>}
       </div>
 
       <button className="btn primary" style={{ width: '100%', marginTop: 16 }} disabled={fin.loading} onClick={() => refreshBalances({ force: true, silent: false })}>
