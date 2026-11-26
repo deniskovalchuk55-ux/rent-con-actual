@@ -54,7 +54,13 @@ function evalFilter(f, p) {
     if (f.rich_text.starts_with != null) return s.startsWith(f.rich_text.starts_with);
     if (f.rich_text.equals != null) return s === f.rich_text.equals;
   }
-  if (f.date) { const d = v && v.date && v.date.start; return !!d && d >= f.date.on_or_after; }
+  if (f.date) {
+    const d = v && v.date && v.date.start && v.date.start.slice(0, 10);
+    if (!d) return false;
+    if (f.date.on_or_after && d < f.date.on_or_after) return false;
+    if (f.date.on_or_before && d > f.date.on_or_before) return false;
+    return true;
+  }
   return true;
 }
 function toStored(props) {
@@ -66,10 +72,31 @@ function toStored(props) {
   }
   return out;
 }
+// сторінка, на якій лежать бази застосунку, і бази, створені сервером (база «Рух коштів»)
+const PARENT_PAGE = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+const createdDbs = new Map();
+const notionOpts = { parentAccess: true, searchCalls: 0 };
 routes.push({
   match: c => c.host === 'api.notion.com',
   reply: c => {
     let m;
+    if (c.path === '/v1/search') {
+      notionOpts.searchCalls++;
+      const q = (c.body && c.body.query) || '';
+      return { body: { results: [...createdDbs.values()].filter(d => d.title[0].plain_text.includes(q)).map(d => ({ object: 'database', id: d.id, title: d.title, archived: false })), has_more: false } };
+    }
+    if (c.path === '/v1/databases' && c.method === 'POST') {
+      if (!notionOpts.parentAccess || c.body.parent.page_id !== PARENT_PAGE) return { status: 404, body: { message: 'Could not find page with ID: ' + c.body.parent.page_id } };
+      const id = uuid();
+      const d = { id, title: [{ plain_text: c.body.title[0].text.content }], properties: JSON.parse(JSON.stringify(c.body.properties)), parent: c.body.parent, is_inline: c.body.is_inline };
+      createdDbs.set(id, d); dbSchemas[id] = d.properties;
+      return { body: { object: 'database', ...d } };
+    }
+    if ((m = c.path.match(/^\/v1\/databases\/([^/]+)$/)) && createdDbs.has(m[1])) {
+      const d = createdDbs.get(m[1]);
+      if (c.method === 'PATCH') Object.assign(d.properties, c.body.properties);
+      return { body: { object: 'database', ...d } };
+    }
     if ((m = c.path.match(/^\/v1\/databases\/([^/]+)\/query$/))) {
       const db = m[1].replace(/-/g, '');
       const list = [...pages.values()].filter(p => p.parent.database_id === db && !p.archived && evalFilter(c.body && c.body.filter, p));
@@ -78,7 +105,7 @@ routes.push({
     if ((m = c.path.match(/^\/v1\/databases\/([^/]+)$/))) {
       const db = Object.values(DB).find(d => d === m[1] || d.replace(/-/g, '') === m[1].replace(/-/g, ''));
       if (c.method === 'PATCH') { Object.assign(dbSchemas[db], c.body.properties); return { body: { properties: dbSchemas[db] } }; }
-      return { body: { properties: dbSchemas[db] || {} } };
+      return { body: { properties: dbSchemas[db] || {}, parent: { type: 'page_id', page_id: PARENT_PAGE }, is_inline: true } };
     }
     if (c.path === '/v1/pages' && c.method === 'POST') {
       const db = c.body.parent.database_id;
@@ -272,7 +299,7 @@ const lib = p => path.join(ROOT, 'api', p);
         ], jars: [{ id: 'jar1', title: 'Відпустка', currencyCode: 980, balance: 500000, goal: 2000000 }] } };
       }
       if (c.path === '/personal/webhook') { webhookSet = c.body.webHookUrl; return { body: { status: 'ok' } }; }
-      if (c.path === '/bank/currency') return { body: [{ currencyCodeA: 978, currencyCodeB: 980, rateBuy: 45, rateSell: 46 }] };
+      if (c.path === '/bank/currency') return { body: [{ currencyCodeA: 978, currencyCodeB: 980, rateBuy: 45, rateSell: 46 }, { currencyCodeA: 840, currencyCodeB: 980, rateBuy: 41.5, rateSell: 42 }] };
       if (c.path.startsWith('/personal/statement/accUAH/')) {
         const t = Math.floor(Date.now() / 1000) - 3600;
         return { body: [
@@ -287,7 +314,7 @@ const lib = p => path.join(ROOT, 'api', p);
   });
   const finPath = lib('finance.js');
   const ENV_FIN = { TG_BOT_TOKEN: BOT, OWNER_TG_ID: String(OWNER), MONO_TOKEN, VERCEL_PROJECT_PRODUCTION_URL: 'rent.example.app' };
-  const reloadFin = () => { for (const m of ['_lib/mono.js', '_lib/expenses.js', '_lib/exchanges.js']) fresh(lib(m)); return fresh(finPath); };
+  const reloadFin = () => { for (const m of ['_lib/mono.js', '_lib/expenses.js', '_lib/exchanges.js', '_lib/tgbot.js', '_lib/notify.js', '_lib/ledger.js', '_lib/transfers.js']) fresh(lib(m)); return fresh(finPath); };
 
   await test('finance: status works without protection and reveals only flags', async () => {
     freshEnv({ MONO_TOKEN }); const h = reloadFin();
@@ -334,7 +361,7 @@ const lib = p => path.join(ROOT, 'api', p);
     freshEnv(ENV_FIN); const h = reloadFin();
     const r = await call(h, { user: { id: OWNER }, body: { action: 'mono-webhook' } });
     assert.strictEqual(r.statusCode, 200, JSON.stringify(r.body));
-    assert.ok(/^https:\/\/rent\.example\.app\/api\/finance\?hook=mono&k=[0-9a-f]{32}$/.test(webhookSet), webhookSet);
+    assert.ok(/^https:\/\/rent\.example\.app\/api\/finance\?hook=mono&k=[0-9a-f]{32}&imp=1&ntf=0&log=0$/.test(webhookSet), webhookSet);
   });
   const hookK = () => new URL(webhookSet).searchParams.get('k');
   await test('webhook: GET verification returns 200 with right key, 403 with wrong', async () => {
@@ -399,6 +426,87 @@ const lib = p => path.join(ROOT, 'api', p);
     assert.strictEqual(r2.body.created.length, 0); assert.strictEqual(r2.body.duplicates.length, 2);
   });
 
+  /* ===== Сповіщення в бот: Монобанк ===== */
+  const tgSent = []; let tgMode = 'ok';
+  routes.unshift({
+    match: c => c.host === 'api.telegram.org',
+    reply: c => {
+      if (c.path !== '/bot' + BOT + '/sendMessage') return { status: 404, body: { ok: false, description: 'Not Found' } };
+      if (tgMode === 'forbidden') return { status: 403, body: { ok: false, error_code: 403, description: "Forbidden: bot can't initiate conversation with a user" } };
+      if (tgMode === 'down') return { status: 502, body: { ok: false, description: 'Bad Gateway' } };
+      tgSent.push({ chat: c.body.chat_id, text: c.body.text, mode: c.body.parse_mode });
+      return { body: { ok: true, result: { message_id: tgSent.length } } };
+    }
+  });
+  const hookQuery = () => Object.fromEntries(new URL(webhookSet).searchParams);
+  const nowSec = () => Math.floor(Date.now() / 1000);
+  await test('notify: switches live in the webhook address (import/notify) and come back in balances', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin();
+    const a = await call(h, { user: { id: OWNER }, body: { action: 'mono-webhook', import: false, notify: true } });
+    assert.strictEqual(a.statusCode, 200, JSON.stringify(a.body)); assert.ok(webhookSet.endsWith('&imp=0&ntf=1&log=0'), webhookSet);
+    const b = await call(h, { user: { id: OWNER }, body: { action: 'balances', only: ['mono'] } });
+    const m = b.body.providers[0];
+    assert.strictEqual(m.webhook, 'on'); assert.strictEqual(m.hookImport, false); assert.strictEqual(m.hookNotify, true);
+    await call(h, { user: { id: OWNER }, body: { action: 'mono-webhook', import: false, notify: false } });
+    assert.strictEqual(webhookSet, '');
+    await call(h, { user: { id: OWNER }, body: { action: 'mono-webhook', import: true, notify: true } });
+    assert.ok(webhookSet.endsWith('&imp=1&ntf=1&log=0'), webhookSet);
+  });
+  await test('notify: card purchase → expense + message with category, card name and own balance', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin(); tgSent.length = 0; tgMode = 'ok';
+    const r = await call(h, { method: 'POST', query: hookQuery(), body: hookBody({ id: 'n1', time: nowSec(), description: 'Сільпо', mcc: 5411, amount: -61240, operationAmount: -61240, currencyCode: 980, balance: 1188810 }) });
+    assert.strictEqual(r.statusCode, 200); assert.strictEqual(r.body.created, 1); assert.strictEqual(r.body.notified, true, JSON.stringify(r.body));
+    assert.strictEqual(tgSent.length, 1); assert.strictEqual(tgSent[0].chat, OWNER); assert.strictEqual(tgSent[0].mode, 'HTML');
+    const t = tgSent[0].text;
+    for (const part of ['💳', '−612,40 ₴', 'Сільпо', 'Чорна картка •1234', 'залишок 1 888,10 ₴', 'у витратах: Продукти']) assert.ok(t.includes(part), part + ' ∉ ' + t);
+  });
+  await test('notify: transfer → message only (no expense); same operation again → no second message', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin(); tgSent.length = 0;
+    const n = expRows().length;
+    const item = { id: 'n2', time: nowSec(), description: 'Переказ на картку', mcc: 4829, amount: -200000, operationAmount: -200000, currencyCode: 980, comment: 'за <квартиру>', counterName: 'Олена К.', balance: 1500000 };
+    const a = await call(h, { method: 'POST', query: hookQuery(), body: hookBody(item) });
+    const b = await call(h, { method: 'POST', query: hookQuery(), body: hookBody(item) });
+    assert.strictEqual(a.body.skipped, 'transfer'); assert.strictEqual(a.body.notified, true); assert.strictEqual(b.body.notified, 'repeat');
+    assert.strictEqual(expRows().length, n); assert.strictEqual(tgSent.length, 1);
+    const t = tgSent[0].text;
+    for (const part of ['↗️', '−2 000 ₴', 'Олена К.', '«за &lt;квартиру&gt;»']) assert.ok(t.includes(part), part + ' ∉ ' + t);
+  });
+  await test('notify: income, foreign-currency purchase, jar; notify off → silent', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin(); tgSent.length = 0;
+    await call(h, { method: 'POST', query: hookQuery(), body: hookBody({ id: 'n3', time: nowSec(), description: 'Від: Олена К.', mcc: 4829, amount: 350000, operationAmount: 350000, currencyCode: 980 }) });
+    await call(h, { method: 'POST', query: hookQuery(), body: hookBody({ id: 'n4', time: nowSec(), description: 'BIEDRONKA', mcc: 5411, amount: -89907, operationAmount: -8620, currencyCode: 985 }) });
+    await call(h, { method: 'POST', query: hookQuery(), body: { type: 'StatementItem', data: { account: 'jar1', statementItem: { id: 'n5', time: nowSec(), description: 'Поповнення банки', mcc: 4829, amount: 100000, operationAmount: 100000, currencyCode: 980, balance: 600000 } } } });
+    await call(h, { method: 'POST', query: { ...hookQuery(), ntf: '0' }, body: hookBody({ id: 'n6', time: nowSec(), description: 'Netflix', mcc: 4899, amount: -38900, operationAmount: -38900, currencyCode: 980 }) });
+    assert.strictEqual(tgSent.length, 3, tgSent.map(x => x.text).join(' | '));
+    assert.ok(tgSent[0].text.startsWith('💰 <b>+3 500 ₴</b>'), tgSent[0].text);
+    assert.ok(tgSent[1].text.includes('−899,07 ₴</b> (86,20 zł)'), tgSent[1].text);
+    assert.ok(tgSent[2].text.includes('Банка «Відпустка» · залишок 6 000 ₴'), tgSent[2].text);
+  });
+  await test('notify: Telegram refuses → webhook still 200 (Monobank must not retry), expense kept', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin(); tgMode = 'forbidden';
+    const r = await call(h, { method: 'POST', query: hookQuery(), body: hookBody({ id: 'n7', time: nowSec(), description: 'Аптека', mcc: 5912, amount: -4500, operationAmount: -4500, currencyCode: 980 }) });
+    tgMode = 'ok';
+    assert.strictEqual(r.statusCode, 200); assert.strictEqual(r.body.created, 1); assert.strictEqual(r.body.notified, false);
+  });
+  await test('notify: test message from the app; forbidden → hint to press Start (424)', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin(); tgSent.length = 0;
+    const ok = await call(h, { user: { id: OWNER }, body: { action: 'notify-test' } });
+    tgMode = 'forbidden';
+    const bad = await call(h, { user: { id: OWNER }, body: { action: 'notify-test' } });
+    tgMode = 'ok';
+    const other = await call(h, { user: { id: OTHER }, body: { action: 'notify-test' } });
+    assert.strictEqual(ok.statusCode, 200); assert.strictEqual(tgSent.length, 1);
+    assert.strictEqual(bad.statusCode, 424); assert.ok(/Почати/.test(bad.body.error), bad.body.error);
+    assert.strictEqual(other.statusCode, 403);
+  });
+  await test('notify: status gives the owner the exchange-check address, other users nothing', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin();
+    const own = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    const other = await call(h, { user: { id: OTHER }, body: { action: 'status' } });
+    assert.ok(/^https:\/\/rent\.example\.app\/api\/finance\?hook=poll&k=[0-9a-f]{32}$/.test(own.body.notify.pollUrl), JSON.stringify(own.body.notify));
+    assert.strictEqual(other.body.notify, null);
+  });
+
   /* ===== Біржі (баланси) ===== */
   routes.unshift(
     { match: c => c.host === 'api.bybit.com' && c.path === '/v5/account/wallet-balance', reply: c => (c.headers['X-BAPI-API-KEY'] === 'eu-key' ? { body: { retCode: 10003, retMsg: 'API key is invalid.' } } : { body: { retCode: 0, result: { list: [{ coin: [{ coin: 'BTC', walletBalance: '0.01', usdValue: '650.5' }, { coin: 'USDT', walletBalance: '100', usdValue: '100' }] }] } } }) },
@@ -418,7 +526,7 @@ const lib = p => path.join(ROOT, 'api', p);
       const ok = sig === crypto.createHmac('sha256', 'mx-secret').update(qs).digest('hex') && c.headers['X-MEXC-APIKEY'] === 'mx-key';
       return ok ? { body: { balances: [{ asset: 'PEPE', free: '1000000', locked: '0' }, { asset: 'EUR', free: '10', locked: '0' }] } } : { status: 400, body: { code: 700002, msg: 'Signature for this request is not valid.' } };
     } },
-    { match: c => c.host === 'api.mexc.com' && c.path === '/api/v3/ticker/price', reply: () => ({ body: [{ symbol: 'PEPEUSDT', price: '0.00001' }] }) },
+    { match: c => c.host === 'api.mexc.com' && c.path === '/api/v3/ticker/price', reply: () => ({ body: [{ symbol: 'PEPEUSDT', price: '0.00001' }, { symbol: 'TONUSDT', price: '5' }] }) },
   );
   const EX_ENV = { ...ENV_FIN, BYBIT_API_KEY: 'k', BYBIT_API_SECRET: 's', BINGX_API_KEY: 'bx-key', BINGX_API_SECRET: 'bx-secret', MEXC_API_KEY: 'mx-key', MEXC_API_SECRET: 'mx-secret' };
   await test('exchanges: Bybit/BingX/MEXC balances with USD values', async () => {
@@ -443,6 +551,194 @@ const lib = p => path.join(ROOT, 'api', p);
     const r = await call(h, { user: { id: OWNER }, body: { action: 'balances', only: ['bingx', 'mexc'] } });
     const by = Object.fromEntries(r.body.providers.map(p => [p.provider, p]));
     assert.strictEqual(by.mexc.ok, false); assert.strictEqual(by.mexc.code, 'auth'); assert.ok(by.bingx.ok);
+  });
+
+  /* ===== Сповіщення в бот: біржі (щохвилинна перевірка) ===== */
+  const hist = { bybitDep: [], bybitWd: [], bybitIdep: [], bingxDep: [], bingxWd: [], mexcDep: [], mexcWd: [], failBybit: false };
+  const signedOk = (c, secret, key, header) => { const q = c.url.split('?')[1]; const [qs, sig] = q.split('&signature='); return sig === crypto.createHmac('sha256', secret).update(qs).digest('hex') && c.headers[header] === key; };
+  routes.unshift(
+    { match: c => c.host === 'api.bybit.com' && c.path === '/v5/asset/deposit/query-record', reply: c => {
+      if (hist.failBybit) return { body: { retCode: 10005, retMsg: 'Permission denied, please check your API key permissions.' } };
+      const q = c.query; assert.ok(Number(q.get('endTime')) - Number(q.get('startTime')) <= 30 * 864e5);
+      return { body: { retCode: 0, result: { rows: hist.bybitDep } } };
+    } },
+    { match: c => c.host === 'api.bybit.com' && c.path === '/v5/asset/withdraw/query-record', reply: () => (hist.failBybit ? { body: { retCode: 10005, retMsg: 'Permission denied' } } : { body: { retCode: 0, result: { rows: hist.bybitWd } } }) },
+    { match: c => c.host === 'api.bybit.com' && c.path === '/v5/asset/deposit/query-internal-record', reply: () => ({ body: { retCode: 0, result: { rows: hist.bybitIdep } } }) },
+    { match: c => c.host === 'open-api.bingx.com' && c.path === '/openApi/api/v3/capital/deposit/hisrec', reply: c => (signedOk(c, 'bx-secret', 'bx-key', 'X-BX-APIKEY') ? { body: hist.bingxDep } : { body: { code: 100001, msg: 'Signature verification failed' } }) },
+    { match: c => c.host === 'open-api.bingx.com' && c.path === '/openApi/api/v3/capital/withdraw/history', reply: () => ({ body: hist.bingxWd }) },
+    { match: c => c.host === 'api.mexc.com' && c.path === '/api/v3/capital/deposit/hisrec', reply: c => (signedOk(c, 'mx-secret', 'mx-key', 'X-MEXC-APIKEY') ? { body: hist.mexcDep } : { status: 400, body: { code: 700002, msg: 'Signature for this request is not valid.' } }) },
+    { match: c => c.host === 'api.mexc.com' && c.path === '/api/v3/capital/withdraw/history', reply: () => ({ body: hist.mexcWd }) },
+  );
+  const pollK = () => crypto.createHmac('sha256', BOT).update('rent-control:transfers-poll').digest('hex').slice(0, 32);
+  const poll = h => call(h, { method: 'GET', query: { hook: 'poll', k: pollK() } });
+  const resetHist = () => { for (const k of Object.keys(hist)) hist[k] = Array.isArray(hist[k]) ? [] : false; };
+
+  await test('poll: wrong key 403; without exchanges nothing to do', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin();
+    const bad = await call(h, { method: 'GET', query: { hook: 'poll', k: 'nope' } });
+    const none = await poll(h);
+    assert.strictEqual(bad.statusCode, 403); assert.strictEqual(none.statusCode, 200); assert.strictEqual(none.body.skipped, 'no-exchanges');
+  });
+  await test('poll: first run only remembers history (sends just the last minute), then each new transfer once', async () => {
+    freshEnv(EX_ENV); const h = reloadFin(); resetHist(); tgSent.length = 0; tgMode = 'ok';
+    const now = Date.now();
+    hist.bybitDep = [{ id: 'd-old', coin: 'USDT', chain: 'TRX', amount: '500', txID: 'tx-old', status: 3, successAt: String(now - 3600e3) }];
+    hist.bingxDep = [{ coin: 'TON', network: 'TON', amount: '12.5', txId: 'bx-recent', status: 6, insertTime: now - 20e3 }];
+    hist.mexcDep = [{ coin: 'KAS', network: 'KAS', amount: '800', txId: 'mx-pend', status: 4, insertTime: now - 30e3 }];
+    let r = await poll(h);
+    assert.strictEqual(r.statusCode, 200, JSON.stringify(r.body)); assert.ok(r.body.checked.every(x => x.ok), JSON.stringify(r.body.checked));
+    assert.strictEqual(tgSent.length, 1, tgSent.map(x => x.text).join(' | '));
+    assert.ok(tgSent[0].text.includes('⬇️ <b>+12,5 TON</b> на BingX'), tgSent[0].text);
+    // переказ Bybit → BingX: виведення й поповнення з одним txId; MEXC-поповнення підтвердилось
+    hist.bybitWd = [{ withdrawId: 'w-1', coin: 'USDT', chain: 'TRX', amount: '300', txID: 'x-move', status: 'success', toAddress: 'TXabcdefghijklmnop1234', withdrawFee: '1', withdrawType: 0, createTime: String(now), updateTime: String(now) }];
+    hist.bingxDep.push({ coin: 'USDT', network: 'TRC20', amount: '299', txId: 'x-move', status: 1, insertTime: now });
+    hist.mexcDep[0].status = 5;
+    r = await poll(h);
+    assert.strictEqual(r.body.sent, 3, JSON.stringify(r.body)); assert.strictEqual(tgSent.length, 4);
+    const texts = tgSent.slice(1).map(x => x.text).join('\n---\n');
+    assert.ok(texts.includes('⬆️ <b>−300 USDT</b> з Bybit\nмережа TRX · на TXabcd…1234 · комісія 1 USDT'), texts);
+    assert.ok(texts.includes('⬇️ <b>+299 USDT</b> на BingX\nмережа TRC20 · з Bybit'), texts);
+    assert.ok(texts.includes('⬇️ <b>+800 KAS</b> на MEXC'), texts);
+    r = await poll(h);
+    assert.strictEqual(r.body.fresh, 0); assert.strictEqual(tgSent.length, 4);
+  });
+  await test('poll: exchange that failed on the first run does not flood its old history later', async () => {
+    freshEnv(EX_ENV); const h = reloadFin(); resetHist(); tgSent.length = 0;
+    const now = Date.now();
+    hist.failBybit = true;
+    hist.bybitDep = [{ id: 'd-2h', coin: 'BTC', chain: 'BTC', amount: '0.01', txID: 't2', status: 3, successAt: String(now - 7200e3) }];
+    let r = await poll(h);
+    const by = r.body.checked.find(x => x.provider === 'bybit');
+    assert.strictEqual(by.ok, false); assert.ok(/прав|Permission/i.test(by.error), by.error);
+    hist.failBybit = false;
+    r = await poll(h);
+    assert.strictEqual(tgSent.length, 0, tgSent.map(x => x.text).join(' | '));
+    hist.bybitIdep = [{ id: 'i-1', type: 1, coin: 'ETH', amount: '0.1', status: 2, address: 'xxxx***@gmail.com', createdTime: String(Math.floor(now / 1000)), txID: 'int-1' }];
+    hist.mexcWd = [{ id: 'mw-1', coin: 'USDT', network: 'BEP20(BSC)', address: '0x1234567890abcdef1234', amount: '50', transferType: 0, status: 7, transactionFee: '0.5', applyTime: now, updateTime: now }];
+    r = await poll(h);
+    const texts = tgSent.map(x => x.text).join('\n---\n');
+    assert.strictEqual(tgSent.length, 2, texts);
+    assert.ok(texts.includes('⬇️ <b>+0,1 ETH</b> на Bybit\nвнутрішній переказ · від xxxx***@gmail.com'), texts);
+    assert.ok(texts.includes('⬆️ <b>−50 USDT</b> з MEXC\nмережа BEP20(BSC) · на 0x1234…1234 · комісія 0,5 USDT'), texts);
+  });
+  await test('poll: many transfers at once → one message; Telegram down → retried next run', async () => {
+    freshEnv(EX_ENV); const h = reloadFin(); resetHist(); tgSent.length = 0;
+    await poll(h); // запамʼятали порожню історію
+    const now = Date.now();
+    hist.bingxWd = [1, 2, 3, 4].map(i => ({ id: 'bw' + i, coin: 'USDT', network: 'TRC20', address: 'TXzz' + i, amount: String(10 * i), status: 6, transactionFee: '1', applyTime: now }));
+    tgMode = 'down';
+    let r = await poll(h);
+    assert.strictEqual(r.body.sent, 0); assert.strictEqual(tgSent.length, 0); assert.strictEqual(r.body.sendError.code, 'server');
+    tgMode = 'ok';
+    r = await poll(h);
+    assert.strictEqual(tgSent.length, 1, JSON.stringify(r.body));
+    assert.ok(tgSent[0].text.startsWith('Рух коштів на біржах · 4'), tgSent[0].text);
+    assert.strictEqual((tgSent[0].text.match(/⬆️/g) || []).length, 4);
+  });
+  await test('poll: app check reports which exchanges answer, without touching notifications', async () => {
+    freshEnv(EX_ENV); const h = reloadFin(); resetHist(); tgSent.length = 0;
+    hist.failBybit = true;
+    hist.mexcDep = [{ coin: 'KAS', network: 'KAS', amount: '1', txId: 'z', status: 5, insertTime: Date.now() - 10e3 }];
+    const r = await call(h, { user: { id: OWNER }, body: { action: 'transfers-check' } });
+    const by = Object.fromEntries(r.body.providers.map(p => [p.provider, p]));
+    assert.strictEqual(by.bybit.ok, false); assert.strictEqual(by.mexc.deposits, 1); assert.ok(by.bingx.ok);
+    assert.ok(r.body.pollUrl.includes('hook=poll&k=')); assert.strictEqual(tgSent.length, 0);
+    hist.failBybit = false;
+    const p = await poll(h); // перший запуск після перевірки: свіже поповнення таки надсилається
+    assert.strictEqual(p.body.sent, 1, JSON.stringify(p.body));
+  });
+
+  /* ===== Історія «Рух коштів» ===== */
+  const ledgerRows = () => { const id = [...createdDbs.keys()][0]; return id ? [...pages.values()].filter(p => p.parent.database_id === id.replace(/-/g, '') && !p.archived) : []; };
+  const prop = (p, n) => { const v = p.properties[n]; return v.title ? v.title[0].plain_text : v.rich_text ? (v.rich_text[0] || {}).plain_text : v.select ? v.select.name : v.date ? v.date.start : v.number; };
+  await test('ledger: no access to the page with databases → clear 409 with what to do', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin(); notionOpts.parentAccess = false;
+    const r = await call(h, { user: { id: OWNER }, body: { action: 'ledger-setup' } });
+    notionOpts.parentAccess = true;
+    assert.strictEqual(r.statusCode, 409); assert.ok(/Connections/.test(r.body.error), r.body.error); assert.strictEqual(createdDbs.size, 0);
+  });
+  await test('ledger: setup creates «Рух коштів» next to the app databases; later found by title', async () => {
+    freshEnv(ENV_FIN); let h = reloadFin();
+    const before = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    assert.strictEqual(before.body.ledger.ready, false);
+    const a = await call(h, { user: { id: OWNER }, body: { action: 'ledger-setup' } });
+    assert.strictEqual(a.statusCode, 200, JSON.stringify(a.body)); assert.strictEqual(a.body.created, true);
+    const d = createdDbs.get(a.body.id);
+    assert.strictEqual(d.parent.page_id, PARENT_PAGE); assert.strictEqual(d.title[0].plain_text, 'Rent·Control · Рух коштів');
+    for (const col of ['Сума', 'Валюта', 'USD', 'Дата', 'Тип', 'Рахунок', 'Опис', 'Банк ID', 'Telegram ID']) assert.ok(d.properties[col], col);
+    h = reloadFin(); // новий екземпляр функції: базу знаходить пошуком
+    const b = await call(h, { user: { id: OWNER }, body: { action: 'ledger-setup' } });
+    assert.strictEqual(b.body.created, false); assert.strictEqual(b.body.id, a.body.id); assert.strictEqual(createdDbs.size, 1);
+    const st = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    assert.strictEqual(st.body.ledger.ready, true);
+    const other = await call(h, { user: { id: OTHER }, body: { action: 'status' } });
+    assert.strictEqual(other.body.ledger, undefined);
+  });
+  await test('ledger: webhook with history on writes every operation once — USD estimate, card, type', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin(); tgSent.length = 0;
+    await call(h, { user: { id: OWNER }, body: { action: 'mono-webhook', log: true, import: false, notify: false } });
+    assert.ok(webhookSet.endsWith('&imp=0&ntf=0&log=1'), webhookSet);
+    const t = nowSec();
+    const ops = [
+      { id: 'L1', time: t, description: 'Сільпо', mcc: 5411, amount: -41750, operationAmount: -41750, currencyCode: 980, balance: 1100000 },
+      { id: 'L2', time: t, description: 'Від: Олена К.', mcc: 4829, amount: 835000, operationAmount: 835000, currencyCode: 980, comment: 'оренда' },
+      { id: 'L3', time: t, description: 'На банку «Відпустка»', mcc: 4829, amount: -100000, operationAmount: -100000, currencyCode: 980 },
+      { id: 'L4', time: t, description: 'Банкомат', mcc: 6011, amount: -50000, operationAmount: -50000, currencyCode: 980 },
+    ];
+    for (const it of ops) { const r = await call(h, { method: 'POST', query: hookQuery(), body: hookBody(it) }); assert.strictEqual(r.body.logged, 1, JSON.stringify(r.body)); }
+    const again = await call(h, { method: 'POST', query: hookQuery(), body: hookBody(ops[0]) });
+    assert.strictEqual(again.body.logged, 0);
+    const rows = ledgerRows().filter(p => prop(p, 'Банк ID').startsWith('mono:L'));
+    assert.strictEqual(rows.length, 4); assert.strictEqual(tgSent.length, 0);
+    const by = Object.fromEntries(rows.map(p => [prop(p, 'Банк ID'), p]));
+    assert.strictEqual(prop(by['mono:L1'], 'Тип'), 'Покупка'); assert.strictEqual(prop(by['mono:L1'], 'Сума'), -417.5);
+    assert.strictEqual(prop(by['mono:L1'], 'USD'), -10); assert.strictEqual(prop(by['mono:L1'], 'Рахунок'), 'Чорна картка •1234');
+    assert.strictEqual(prop(by['mono:L2'], 'Тип'), 'Надходження'); assert.ok(prop(by['mono:L2'], 'Опис').includes('оренда'));
+    assert.strictEqual(prop(by['mono:L3'], 'Тип'), 'Переказ'); assert.strictEqual(prop(by['mono:L4'], 'Тип'), 'Готівка');
+    assert.strictEqual(prop(by['mono:L1'], 'Telegram ID'), OWNER);
+    assert.strictEqual(expRows().filter(p => prop(p, 'Банк ID') === 'mono:L1').length, 0, 'imp=0 → no expense');
+  });
+  await test('ledger: month statement → entries; ledger-write validates and skips duplicates', async () => {
+    freshEnv(ENV_FIN); const h = reloadFin();
+    const r = await call(h, { user: { id: OWNER }, body: { action: 'mono-statement', account: 'accUAH', from: Date.now() - 20 * 864e5, to: Date.now() } });
+    assert.strictEqual(r.statusCode, 200, JSON.stringify(r.body));
+    const e = r.body.entries;
+    assert.strictEqual(e.length, 4); assert.strictEqual(r.body.more, null);
+    const pl = e.find(x => x.bankId === 'mono:tx3');
+    assert.strictEqual(pl.amount, -1520); assert.strictEqual(pl.currency, 'UAH'); assert.ok(pl.note.startsWith('150 PLN'), pl.note); assert.strictEqual(pl.kind, 'expense');
+    const evil = { bankId: 'x:1', amount: 'NaN', currency: 'uah', date: 'yesterday', kind: 'hack' };
+    const w1 = await call(h, { user: { id: OWNER }, body: { action: 'ledger-write', items: [...e, evil] } });
+    const w2 = await call(h, { user: { id: OWNER }, body: { action: 'ledger-write', items: e } });
+    assert.strictEqual(w1.body.created, 4); assert.strictEqual(w1.body.invalid, 1);
+    assert.strictEqual(w2.body.created, 0); assert.strictEqual(w2.body.duplicates, 4);
+    const bad = await call(h, { user: { id: OWNER }, body: { action: 'mono-statement', account: '../etc' } });
+    assert.strictEqual(bad.statusCode, 400);
+  });
+  await test('ledger: exchanges — history entries and 30-day sync; stablecoins 1:1, others by spot price', async () => {
+    freshEnv(EX_ENV); const h = reloadFin(); resetHist();
+    const now = Date.now();
+    hist.bybitWd = [{ withdrawId: 'lw-1', coin: 'USDT', chain: 'TRX', amount: '300', txID: 'l-move', status: 'success', toAddress: 'TXabcdefghijklmnop1234', withdrawFee: '1', withdrawType: 0, createTime: String(now - 864e5), updateTime: String(now - 864e5) }];
+    hist.bingxDep = [{ coin: 'TON', network: 'TON', amount: '10', txId: 'l-ton', status: 6, insertTime: now - 2 * 864e5 }];
+    const hb = await call(h, { user: { id: OWNER }, body: { action: 'exchange-history', provider: 'bybit', from: now - 60 * 864e5, to: now } });
+    assert.strictEqual(hb.statusCode, 200, JSON.stringify(hb.body));
+    const w = hb.body.entries[0];
+    assert.strictEqual(w.kind, 'withdrawal'); assert.strictEqual(w.amount, -300); assert.strictEqual(w.usd, -300); assert.strictEqual(w.account, 'Bybit');
+    const s1 = await call(h, { user: { id: OWNER }, body: { action: 'ledger-sync' } });
+    const s2 = await call(h, { user: { id: OWNER }, body: { action: 'ledger-sync' } });
+    assert.strictEqual(s1.body.created, 2, JSON.stringify(s1.body)); assert.strictEqual(s2.body.created, 0); assert.strictEqual(s2.body.duplicates, 2);
+    const ton = ledgerRows().find(p => prop(p, 'Банк ID').startsWith('bingx:dep:'));
+    assert.strictEqual(prop(ton, 'Тип'), 'Поповнення біржі'); assert.strictEqual(prop(ton, 'USD'), 50); assert.strictEqual(prop(ton, 'Валюта'), 'TON');
+    const none = await call(h, { user: { id: OWNER }, body: { action: 'exchange-history', provider: 'kraken' } });
+    assert.strictEqual(none.statusCode, 400);
+  });
+
+  await test('ledger: app reads «Рух коштів» through the Notion proxy — only own rows', async () => {
+    freshEnv({ ...ENV_FIN, NOTION_TOKEN: 'secret_x' });
+    fresh(lib('_lib/ledger.js')); const h = fresh(notionPath);
+    const own = await call(h, { user: { id: OWNER }, body: { action: 'query', database: 'DB_LEDGER' } });
+    const other = await call(h, { user: { id: OTHER }, body: { action: 'query', database: 'DB_LEDGER' } });
+    assert.strictEqual(own.statusCode, 200, JSON.stringify(own.body)); assert.ok(own.body.results.length >= 6, own.body.results.length);
+    assert.strictEqual(other.body.results.length, 0);
   });
 
   console.log(results.join('\n'));

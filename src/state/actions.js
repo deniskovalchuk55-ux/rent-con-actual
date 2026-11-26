@@ -183,8 +183,8 @@ export async function boot() {
     settings,
     data: cache ? cache.data : emptyData(),
     prices: cache ? cache.prices || {} : {},
-    finance: cache && cache.finance ? { ...emptyFinance(), ...cache.finance, loading: false, error: null } : emptyFinance(),
-    loaded: cache ? { core: true, expenses: !!cache.loaded?.expenses, goals: !!cache.loaded?.goals, assets: !!cache.loaded?.assets } : s.loaded,
+    finance: cache && cache.finance ? { ...emptyFinance(), ...cache.finance, loading: false, error: null, ledgerSyncedAt: cache.ledgerSyncedAt || 0 } : emptyFinance(),
+    loaded: cache ? { core: true, expenses: !!cache.loaded?.expenses, goals: !!cache.loaded?.goals, assets: !!cache.loaded?.assets, ledger: cache.data.ledger.length > 0 } : s.loaded,
     sync: { ...s.sync, fromCache: !!cache, lastSync: cache ? cache.savedAt : null },
   }))
   pullCloudSettings()
@@ -225,7 +225,7 @@ export async function syncAll({ initial = false, silent = false } = {}) {
       loadExpenses(),
       mods.goals ? loadGoals() : null,
       mods.assets ? loadAssets() : null,
-      mods.accounts ? import('./finance.js').then(f => f.refreshBalances({ force: !initial })).catch(() => null) : null,
+      mods.accounts ? import('./finance.js').then(f => f.refreshBalances({ force: !initial }).then(() => f.ledgerTick())).catch(() => null) : null,
     ])
     if (!initial && !silent) toast('Синхронізовано з Notion', { kind: 'success' })
     return true

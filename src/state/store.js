@@ -7,12 +7,15 @@ import { cloud } from '../lib/telegram.js'
 
 const SETTINGS_KEY = 'rc5:settings'
 const CACHE_PREFIX = 'rc5:cache:'
+// історія операцій велика — кешуємо окремо, щоб переповнення сховища не зачепило решту кешу
+const LEDGER_PREFIX = 'rc5:ledger:'
 const LEGACY_KEY = 'rent-control-v3'
 const CLOUD_KEY = 'rc5_settings'
 
 export const emptyData = () => ({
   clients: [], workEntries: [], workCategories: [], payouts: [],
   expenses: [], expenseCats: [], goals: [], goalTx: [], assets: [], assetTx: [],
+  ledger: [],
 })
 
 export const defaultSettings = () => ({
@@ -41,7 +44,7 @@ let state = {
 }
 
 export function emptyFinance() {
-  return { status: null, statusError: null, providers: [], fetchedAt: null, loading: false, error: null, coinMeta: {} }
+  return { status: null, statusError: null, providers: [], fetchedAt: null, loading: false, error: null, coinMeta: {}, ledgerSyncedAt: 0, backfill: null }
 }
 
 const listeners = new Set()
@@ -114,6 +117,8 @@ function scheduleCacheSave() {
     const clean = arr => arr.filter(x => !String(x.id).startsWith('tmp-'))
     for (const k of Object.keys(data)) data[k] = clean(data[k])
     data.clients = data.clients.map(c => ({ ...c, payments: clean(c.payments || []) }))
+    delete data.ledger
+    if (state.loaded.ledger === true) ls.set(LEDGER_PREFIX + state.user.id, { savedAt: Date.now(), syncedAt: state.finance.ledgerSyncedAt || 0, rows: state.data.ledger })
     const fin = state.finance
     ls.set(CACHE_PREFIX + state.user.id, {
       v: 5, savedAt: Date.now(), data, prices: state.prices, loaded: state.loaded,
@@ -125,11 +130,12 @@ function scheduleCacheSave() {
 export function loadCache(userId) {
   const c = ls.get(CACHE_PREFIX + userId)
   if (!c || c.v !== 5 || !c.data) return null
-  return { ...c, data: { ...emptyData(), ...c.data } }
+  const l = ls.get(LEDGER_PREFIX + userId)
+  return { ...c, data: { ...emptyData(), ...c.data, ledger: (l && Array.isArray(l.rows) && l.rows) || [] }, ledgerSyncedAt: (l && l.syncedAt) || 0 }
 }
 
 export function clearCache() {
-  if (state.user) ls.del(CACHE_PREFIX + state.user.id)
+  if (state.user) { ls.del(CACHE_PREFIX + state.user.id); ls.del(LEDGER_PREFIX + state.user.id) }
 }
 
 // Налаштування: rc5 → або перенесення з v3

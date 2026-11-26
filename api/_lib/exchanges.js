@@ -90,21 +90,66 @@ async function bybitCollect(host) {
   return holdings;
 }
 
-async function bybitBalances() {
+// Ключ від bybit.com не працює на bybit.eu і навпаки — пробуємо обидва й запамʼятовуємо вдалий
+async function bybitWithHost(fn) {
   if (!process.env.BYBIT_API_KEY || !process.env.BYBIT_API_SECRET) throw new ProviderError('setup', 'Не задано BYBIT_API_KEY / BYBIT_API_SECRET');
   const hosts = process.env.BYBIT_HOST ? [process.env.BYBIT_HOST] : bybitHost ? [bybitHost] : BYBIT_HOSTS;
   let last;
   for (const host of hosts) {
     try {
-      const holdings = await bybitCollect(host);
+      const result = await fn(host);
       bybitHost = host;
-      return { provider: 'bybit', label: host.endsWith('.eu') ? 'Bybit EU' : 'Bybit', ok: true, holdings };
+      return { host, label: host.endsWith('.eu') ? 'Bybit EU' : 'Bybit', result };
     } catch (e) {
       last = e;
       if (e.code !== 'auth' || e.retCode !== 10003) throw e; // інший хост пробуємо лише коли ключ «не той»
     }
   }
   throw last;
+}
+
+async function bybitBalances() {
+  const { label, result } = await bybitWithHost(bybitCollect);
+  return { provider: 'bybit', label, ok: true, holdings: result };
+}
+
+/* ---------- Поповнення й виведення (для сповіщень у бот) ---------- */
+// Час у мс: приймає мс, секунди або рядок дати
+function toMs(v) {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number' || /^\d+$/.test(String(v))) { const n = Number(v); return n < 1e12 ? n * 1000 : n; }
+  const s = String(v).trim();
+  const t = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s.replace(' ', 'T') + 'Z');
+  return Number.isNaN(t) ? 0 : t;
+}
+
+// Подія: { key, provider, label, dir: in|out, coin, amount, network, txId, address, fee, internal, from, time }
+async function bybitTransfers(now, windowMs) {
+  const range = { startTime: now - windowMs, endTime: now, limit: 50 };
+  const { label, result } = await bybitWithHost(async host => {
+    const [dep, wd] = await Promise.all([
+      bybitGet(host, '/v5/asset/deposit/query-record', range),
+      bybitGet(host, '/v5/asset/withdraw/query-record', { ...range, withdrawType: 2 }),
+    ]);
+    // внутрішні поповнення (від інших користувачів Bybit) — якщо ключ має права
+    const idep = await bybitGet(host, '/v5/asset/deposit/query-internal-record', range).catch(() => ({ rows: [] }));
+    return { dep, wd, idep };
+  });
+  const out = [];
+  for (const r of result.dep.rows || []) {
+    if (Number(r.status) !== 3) continue; // 3 — зараховано
+    out.push({ key: 'bybit:dep:' + (r.id || `${r.txID}:${r.coin}:${r.amount}`), provider: 'bybit', label, dir: 'in', coin: r.coin, amount: num(r.amount), network: r.chain, txId: r.txID || '', time: toMs(r.successAt) });
+  }
+  for (const r of result.idep.rows || []) {
+    if (Number(r.status) !== 2) continue; // 2 — успішно
+    out.push({ key: 'bybit:idep:' + (r.id || r.txID), provider: 'bybit', label, dir: 'in', coin: r.coin, amount: num(r.amount), internal: true, from: r.address || '', txId: r.txID || '', time: toMs(r.createdTime) });
+  }
+  for (const r of result.wd.rows || []) {
+    if (String(r.status).toLowerCase() !== 'success') continue;
+    const internal = Number(r.withdrawType) === 1 || r.chain === 'internalAddressChain';
+    out.push({ key: 'bybit:wd:' + (r.withdrawId || r.txID), provider: 'bybit', label, dir: 'out', coin: r.coin, amount: num(r.amount), network: internal ? '' : r.chain, txId: r.txID || '', address: internal ? 'UID ' + r.toAddress : r.toAddress, fee: num(r.withdrawFee), internal, time: toMs(r.updateTime || r.createTime) });
+  }
+  return out;
 }
 
 /* ===================== BingX ===================== */
@@ -136,7 +181,7 @@ async function bingxGet(path, params = {}, signed = true) {
   const r = await fetchT(`${BINGX}${path}?${q}`, { headers });
   const d = await readJson(r);
   if (!r.ok || !d || (d.code !== 0 && d.code !== undefined)) throw bingxError(d, r.status);
-  return d.data;
+  return Array.isArray(d) ? d : d.data; // історія поповнень і виведень — голий масив
 }
 
 const BINGX_ACCOUNT = { stdFutures: 'Стандартні фʼючерси', coinMPerp: 'Безстрокові COIN-M', USDTMPerp: 'Безстрокові USDT-M', copyTrading: 'Копітрейдинг', grid: 'Сіткові боти', eran: 'Earn', c2c: 'P2P' };
@@ -171,6 +216,26 @@ async function bingxBalances() {
     }
   } catch { /* огляд необовʼязковий */ }
   return { provider: 'bingx', label: 'BingX', ok: true, holdings };
+}
+
+async function bingxTransfers(now, windowMs) {
+  if (!process.env.BINGX_API_KEY || !process.env.BINGX_API_SECRET) throw new ProviderError('setup', 'Не задано BINGX_API_KEY / BINGX_API_SECRET');
+  const range = { startTime: now - windowMs, endTime: now, limit: 1000 };
+  const [dep, wd] = await Promise.all([
+    bingxGet('/openApi/api/v3/capital/deposit/hisrec', range),
+    bingxGet('/openApi/api/v3/capital/withdraw/history', range),
+  ]);
+  const out = [];
+  for (const r of Array.isArray(dep) ? dep : []) {
+    // 6 — підтверджено в мережі; 1 — завершено (за старою схемою BingX). Ключ однаковий, тож без дублів
+    if (![1, 6].includes(Number(r.status))) continue;
+    out.push({ key: 'bingx:dep:' + (r.id || `${r.txId}:${r.coin}:${r.amount}:${r.insertTime}`), provider: 'bingx', label: 'BingX', dir: 'in', coin: r.coin, amount: num(r.amount), network: r.network, txId: r.txId || '', time: toMs(r.insertTime) });
+  }
+  for (const r of Array.isArray(wd) ? wd : []) {
+    if (Number(r.status) !== 6) continue; // 6 — завершено
+    out.push({ key: 'bingx:wd:' + (r.id || r.txId), provider: 'bingx', label: 'BingX', dir: 'out', coin: r.coin, amount: num(r.amount), network: r.network, txId: r.txId || '', address: r.address, fee: num(r.transactionFee), time: toMs(r.applyTime) });
+  }
+  return out;
 }
 
 /* ===================== MEXC ===================== */
@@ -225,10 +290,41 @@ async function mexcBalances() {
   return { provider: 'mexc', label: 'MEXC', ok: true, holdings };
 }
 
+async function mexcTransfers(now, windowMs) {
+  if (!process.env.MEXC_API_KEY || !process.env.MEXC_API_SECRET) throw new ProviderError('setup', 'Не задано MEXC_API_KEY / MEXC_API_SECRET');
+  const range = { startTime: now - windowMs, endTime: now, limit: 1000 };
+  const [dep, wd] = await Promise.all([
+    mexcGet('/api/v3/capital/deposit/hisrec', range),
+    mexcGet('/api/v3/capital/withdraw/history', range),
+  ]);
+  const out = [];
+  for (const r of Array.isArray(dep) ? dep : []) {
+    if (![5, 12].includes(Number(r.status))) continue; // 5 SUCCESS, 12 COMPLETED
+    out.push({ key: 'mexc:dep:' + (r.id || `${r.txId}:${r.coin}:${r.amount}:${r.insertTime}`), provider: 'mexc', label: 'MEXC', dir: 'in', coin: r.coin, amount: num(r.amount), network: r.network || r.netWork, txId: r.txId || '', time: toMs(r.updateTime || r.insertTime) });
+  }
+  for (const r of Array.isArray(wd) ? wd : []) {
+    if (Number(r.status) !== 7) continue; // 7 SUCCESS
+    const internal = Number(r.transferType) === 1;
+    out.push({ key: 'mexc:wd:' + (r.id || r.txId), provider: 'mexc', label: 'MEXC', dir: 'out', coin: r.coin, amount: num(r.amount), network: internal ? '' : r.network, txId: r.txId || '', address: r.address, fee: num(r.transactionFee), internal, time: toMs(r.updateTime || r.applyTime) });
+  }
+  return out;
+}
+
+// Поточні ціни монет у USDT (публічний ціновий список MEXC) — щоб оцінити поповнення не-стейблкоїнами
+let priceCache = { at: 0, map: null };
+async function spotPrices() {
+  if (priceCache.map && Date.now() - priceCache.at < 5 * 60e3) return priceCache.map;
+  const t = await mexcGet('/api/v3/ticker/price', {}, false);
+  const map = new Map();
+  for (const x of Array.isArray(t) ? t : []) if (String(x.symbol).endsWith('USDT')) map.set(x.symbol.slice(0, -4), num(x.price));
+  priceCache = { at: Date.now(), map };
+  return map;
+}
+
 const EXCHANGES = {
-  bybit: { label: 'Bybit', configured: () => !!(process.env.BYBIT_API_KEY && process.env.BYBIT_API_SECRET), balances: bybitBalances },
-  bingx: { label: 'BingX', configured: () => !!(process.env.BINGX_API_KEY && process.env.BINGX_API_SECRET), balances: bingxBalances },
-  mexc: { label: 'MEXC', configured: () => !!(process.env.MEXC_API_KEY && process.env.MEXC_API_SECRET), balances: mexcBalances },
+  bybit: { label: 'Bybit', configured: () => !!(process.env.BYBIT_API_KEY && process.env.BYBIT_API_SECRET), balances: bybitBalances, transfers: bybitTransfers },
+  bingx: { label: 'BingX', configured: () => !!(process.env.BINGX_API_KEY && process.env.BINGX_API_SECRET), balances: bingxBalances, transfers: bingxTransfers },
+  mexc: { label: 'MEXC', configured: () => !!(process.env.MEXC_API_KEY && process.env.MEXC_API_SECRET), balances: mexcBalances, transfers: mexcTransfers },
 };
 
-module.exports = { EXCHANGES, bingxQuery, mexcQuery, valueHoldings };
+module.exports = { EXCHANGES, bingxQuery, mexcQuery, valueHoldings, toMs, spotPrices };

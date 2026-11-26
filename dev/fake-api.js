@@ -13,6 +13,7 @@ const SCHEMAS = {
   DB_ASSET_TX: { 'ID': 'title', 'Актив': 'relation', 'Дата': 'date', 'Тип': 'select', 'Кількість': 'number', 'Ціна': 'number', 'Валюта': 'select', 'Комісія': 'number', 'Опис': 'rich_text', 'Telegram ID': 'number' },
   DB_EXPENSES: { 'Назва': 'title', 'Сума': 'number', 'Валюта': 'select', 'Дата': 'date', 'Категорія': 'relation', 'Опис': 'rich_text', 'Telegram ID': 'number', 'Банк ID': 'rich_text' },
   DB_CAT_EXPENSES: { 'Назва': 'title', 'Загальна': 'checkbox', 'Telegram ID': 'number' },
+  DB_LEDGER: { 'Назва': 'title', 'Сума': 'number', 'Валюта': 'select', 'USD': 'number', 'Дата': 'date', 'Тип': 'select', 'Рахунок': 'select', 'Опис': 'rich_text', 'Банк ID': 'rich_text', 'Telegram ID': 'number' },
 }
 
 let n = 0

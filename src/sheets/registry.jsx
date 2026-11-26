@@ -6,6 +6,7 @@ import { WorkEntrySheet, CategorySheet, MonthSheet, PayoutSheet, DaySheet } from
 import { GoalSheet, GoalFormSheet, GoalTxSheet, LevelUpSheet, PickGoalSheet, AssetSheet, AssetSearchSheet, AssetTxSheet } from './capital.jsx'
 import { QuickAddSheet, ConfirmSheet, SettingsSheet, RatesSheet } from './misc.jsx'
 import { IntegrationsSheet, MonoImportSheet } from './finance.jsx'
+import { HistorySheet } from './history.jsx'
 
 const MAP = {
   client: ClientSheet, clientForm: ClientFormSheet, pay: PaySheet, pickClient: PickClientSheet,
@@ -13,7 +14,7 @@ const MAP = {
   goal: GoalSheet, goalForm: GoalFormSheet, goalTx: GoalTxSheet, levelUp: LevelUpSheet, pickGoal: PickGoalSheet,
   asset: AssetSheet, assetSearch: AssetSearchSheet, assetTx: AssetTxSheet,
   quickAdd: QuickAddSheet, confirm: ConfirmSheet, settings: SettingsSheet, rates: RatesSheet,
-  integrations: IntegrationsSheet, monoImport: MonoImportSheet,
+  integrations: IntegrationsSheet, monoImport: MonoImportSheet, history: HistorySheet,
 }
 
 export function SheetHost() {

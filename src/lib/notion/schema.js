@@ -33,6 +33,7 @@ export const DB = {
   CLIENTS: 'DB_CLIENTS', PAYMENTS: 'DB_PAYMENTS', WORK_ENTRIES: 'DB_WORK_ENTRIES', WORK_CATEGORIES: 'DB_WORK_CATEGORIES',
   PAYOUTS: 'DB_PAYOUTS', GOALS: 'DB_GOALS', GOAL_TX: 'DB_GOAL_TX', ASSETS: 'DB_ASSETS', ASSET_TX: 'DB_ASSET_TX',
   EXPENSES: 'DB_EXPENSES', CAT_EXPENSES: 'DB_CAT_EXPENSES',
+  LEDGER: 'DB_LEDGER',
 }
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -209,6 +210,27 @@ export function parseExpense(page) {
     currency: getSelect(p, 'Валюта') || 'UAH',
     date: dateOnly(getDate(p, 'Дата')) || todayISO(),
     categoryId: getRelationFirst(p, 'Категорія'),
+    note: getRichText(p, 'Опис'),
+    tgId: getNumber(p, 'Telegram ID'),
+  }
+}
+
+// «Рух коштів»: операції банків і бірж (пише сервер, застосунок лише читає)
+export const LEDGER_KIND = { 'Надходження': 'income', 'Покупка': 'expense', 'Переказ': 'transfer', 'Готівка': 'cash', 'Поповнення біржі': 'deposit', 'Виведення з біржі': 'withdrawal' }
+export function parseLedger(page) {
+  const p = page.properties
+  const titleKey = Object.keys(p).find(k => p[k] && p[k].type === 'title') || 'Назва'
+  const type = getSelect(p, 'Тип')
+  return {
+    id: page.id,
+    bankId: getRichText(p, 'Банк ID'),
+    title: getTitle(p, titleKey),
+    amount: getNumber(p, 'Сума') || 0,
+    currency: getSelect(p, 'Валюта') || 'UAH',
+    usd: getNumber(p, 'USD'),
+    date: getDate(p, 'Дата') || todayISO(),
+    kind: LEDGER_KIND[type] || (getNumber(p, 'Сума') > 0 ? 'income' : 'expense'),
+    account: getSelect(p, 'Рахунок') || '',
     note: getRichText(p, 'Опис'),
     tgId: getNumber(p, 'Telegram ID'),
   }
