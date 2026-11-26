@@ -31,6 +31,9 @@ const SCHEMA = {
 };
 
 const titleOf = d => (d.title || []).map(t => t.plain_text || (t.text && t.text.content) || '').join('');
+// базу, створену вручну, впізнаємо за словами «Рух коштів» у назві (без урахування регістру й зайвих пробілів)
+const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const KEY = 'рух коштів';
 let cache = { id: null, missAt: 0, schemaAt: 0, titleProp: 'Назва' };
 
 // Знайти базу (без створення). Негативну відповідь памʼятаємо хвилину, щоб не шукати на кожному запиті.
@@ -38,8 +41,9 @@ async function findLedger({ fresh = false } = {}) {
   if (process.env.DB_LEDGER) return process.env.DB_LEDGER;
   if (cache.id) return cache.id;
   if (!fresh && Date.now() - cache.missAt < 60e3) return null;
-  const r = await notion('/search', 'POST', { query: TITLE, filter: { property: 'object', value: 'database' }, page_size: 25 });
-  const hit = (r.results || []).find(d => d.object === 'database' && !d.archived && !d.in_trash && titleOf(d) === TITLE);
+  const r = await notion('/search', 'POST', { query: 'Рух коштів', filter: { property: 'object', value: 'database' }, page_size: 25 });
+  const live = (r.results || []).filter(d => d.object === 'database' && !d.archived && !d.in_trash);
+  const hit = live.find(d => titleOf(d) === TITLE) || live.find(d => norm(titleOf(d)).includes(KEY));
   if (hit) cache.id = hit.id;
   else cache.missAt = Date.now();
   return cache.id;
@@ -85,7 +89,7 @@ async function setupLedger() {
       return { id: db.id, created: true };
     } catch { /* немає доступу до цієї сторінки — пробуємо іншу */ }
   }
-  throw Object.assign(new Error('Не вдалось створити базу «' + TITLE + '»: у інтеграції Notion немає доступу до сторінки з твоїми базами. Відкрий у Notion сторінку, де лежать бази, → ••• → Connections → додай свою інтеграцію й спробуй ще раз. Або створи базу з такою назвою сам і підключи до неї інтеграцію.'), { status: 409, code: 'ledger-access' });
+  throw Object.assign(new Error('Не вдалось створити базу «Рух коштів»: у інтеграції Notion немає доступу до сторінки з твоїми базами. Відкрий у Notion сторінку, де лежать бази → ••• → Connections → додай свою інтеграцію. Або створи базу «Рух коштів» сам, підключи до неї інтеграцію й натисни «Увімкнути» ще раз.'), { status: 409, code: 'ledger-access' });
 }
 
 /* ---------- записи ---------- */

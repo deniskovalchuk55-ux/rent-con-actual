@@ -69,6 +69,8 @@ function syncBack() {
 let tseq = 0
 // toast('Збережено', { kind: 'success' | 'error' | 'info', action: { label, onClick }, duration })
 export function toast(message, opts = {}) {
+  const same = ui.toasts.find(t => t.message === message && t.kind === (opts.kind || 'info') && !opts.action)
+  if (same) return same.id // те саме повідомлення вже на екрані
   const id = ++tseq
   const t = { id, message, kind: opts.kind || 'info', action: opts.action || null }
   set({ toasts: [...ui.toasts.slice(-2), t] })
