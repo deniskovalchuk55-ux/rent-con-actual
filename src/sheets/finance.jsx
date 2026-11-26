@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Sheet } from '../ui/sheet.jsx'
 import { useStore } from '../state/store.js'
 import { closeSheet, toast, openSheet } from '../state/ui.js'
-import { refreshBalances, setMonoWebhook, monoPreview, importExpenses, canSeeBanks } from '../state/finance.js'
+import { refreshBalances, setMonoHook, monoHookFlags, monoPreview, importExpenses, canSeeBanks, ledgerReady, enableHistory, notifyTest, transfersCheck } from '../state/finance.js'
 import { getAuthMode } from '../lib/notion/api.js'
 import { useMoney } from '../ui/money.jsx'
 import { Icon } from '../ui/icons.jsx'
@@ -59,7 +59,10 @@ export function IntegrationsSheet({ sheetId, closing }) {
     return l === 'ok' ? <Status ok text="працює" /> : l === 'error' ? <Status warn text="помилка" /> : <Status text="перевіряю…" />
   }
   const mono = prov('mono')
+  const flags = monoHookFlags(mono)
+  const ledgerOn = ledgerReady(st)
   const ownerId = user ? String(user.id) : 'твій ID'
+  const anyExchange = ['bybit', 'bingx', 'mexc'].some(configured)
 
   return (
     <Sheet sheetId={sheetId} closing={closing} title="Підключення">
@@ -92,8 +95,16 @@ export function IntegrationsSheet({ sheetId, closing }) {
             </ol>
           ) : mono && mono.ok ? (
             <div className="stack" style={{ marginTop: 12 }}>
-              <Switch on={mono.webhook === 'on'} onChange={async v => { setBusy(true); await setMonoWebhook(v); setBusy(false) }}
-                label="Записувати витрати самі" sub={mono.webhook === 'other' ? 'Зараз вебхук Монобанку веде на інший сервіс — увімкнення його замінить' : 'Кожна оплата карткою одразу потрапляє у витрати Expense·Control'} />
+              {mono.webhook === 'other' && <div className="muted" style={{ fontSize: 13 }}>Зараз вебхук Монобанку веде на інший сервіс — будь-який перемикач нижче його замінить.</div>}
+              <Switch on={flags.log && ledgerOn} onChange={async v => {
+                setBusy(true)
+                if (v && !ledgerOn) await enableHistory(); else await setMonoHook({ log: v })
+                setBusy(false)
+              }} label="Історія операцій" sub="Кожна операція зберігається в Notion — для історії й аналітики по місяцях" />
+              <Switch on={flags.import} onChange={async v => { setBusy(true); await setMonoHook({ import: v }); setBusy(false) }}
+                label="Записувати покупки у витрати" sub="Кожна оплата карткою одразу потрапляє у витрати Expense·Control" />
+              <Switch on={flags.notify} onChange={async v => { setBusy(true); await setMonoHook({ notify: v }); setBusy(false) }}
+                label="Сповіщення в Telegram" sub="Бот напише про кожну операцію. За замовчуванням вимкнено" />
               <button className="btn sm" style={{ width: '100%' }} disabled={busy} onClick={() => openSheet('monoImport')}><Icon.download />Імпортувати виписку за 31 день</button>
             </div>
           ) : mono && !mono.ok ? <div className="muted" style={{ fontSize: 13.5, marginTop: 10 }}>{mono.error}</div> : null}
@@ -124,6 +135,8 @@ export function IntegrationsSheet({ sheetId, closing }) {
         <Block badge="enablebanking" title="Польські банки" status={<Status text="наступний етап" />}>
           <div className="muted" style={{ fontSize: 13.5, marginTop: 10 }}>PKO, mBank, Pekao, Santander, Revolut та інші — через Enable Banking (офіційний PSD2, безкоштовно для власних рахунків). Підключаю наступним кроком.</div>
         </Block>
+
+        {canSeeBanks(st) && <NotifyBlock st={st} anyExchange={anyExchange} monoNotify={flags.notify} />}
         </>}
       </div>
 
@@ -133,6 +146,46 @@ export function IntegrationsSheet({ sheetId, closing }) {
     </Sheet>
   )
 }
+
+// Сповіщення в бот — необовʼязкові: Монобанк вмикається перемикачем вище, біржі — щохвилинною перевіркою
+function NotifyBlock({ st, anyExchange, monoNotify }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [check, setCheck] = useState(null)
+  const pollUrl = st.notify && st.notify.pollUrl
+  return (
+    <Block icon={Icon.bell} title="Сповіщення в боті" status={monoNotify ? <Status ok text="Монобанк" /> : <Status text="вимкнено" />}>
+      <div className="muted" style={{ fontSize: 13.5, marginTop: 10 }}>Необовʼязково. Історія й аналітика працюють і без повідомлень.</div>
+      <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+        <button className="btn sm" disabled={busy} onClick={async () => { setBusy(true); await notifyTest(); setBusy(false) }}><Icon.send />Тестове повідомлення</button>
+        {anyExchange && <button className="btn sm" onClick={() => setOpen(v => !v)}><Icon.bell />{open ? 'Сховати' : 'Біржі в бот'}</button>}
+      </div>
+      {open && anyExchange && (
+        <div style={{ marginTop: 12 }}>
+          <ol className="howto">
+            <li>Біржі самі нічого не надсилають, тож сервер має перевіряти їх щохвилини. Безкоштовно це робить <b>cron-job.org</b> — зареєструйся там.</li>
+            <li>Create cronjob → URL: {pollUrl ? <button className="env-chip" onClick={() => copy(pollUrl, 'Адресу скопійовано')}>скопіювати адресу</button> : 'зʼявиться після налаштування захисту'} → розклад <b>Every 1 minute</b> → Create.</li>
+            <li>Нові поповнення й виведення прийдуть у бот протягом хвилини. Вимкнути — зупини завдання на cron-job.org.</li>
+          </ol>
+          <button className="btn sm" style={{ marginTop: 10 }} disabled={busy} onClick={async () => {
+            setBusy(true)
+            try { setCheck((await transfersCheck()).providers || []) } catch (e) { setCheck([{ provider: 'error', ok: false, error: e.message }]) }
+            setBusy(false)
+          }}><Icon.refresh />Перевірити біржі</button>
+          {check && (
+            <div className="stack" style={{ gap: 0, marginTop: 8 }}>
+              {check.map(c => (
+                <div key={c.provider} className="kv"><span className="k">{(PROVIDER_LABEL[c.provider] || c.provider)}</span>
+                  <span className={'v ' + (c.ok ? 'pos' : 'neg')} style={{ fontSize: 13, textAlign: 'right' }}>{c.ok ? `✓ ${c.deposits} поповн. · ${c.withdrawals} вивед. за добу` : c.error}</span></div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Block>
+  )
+}
+const PROVIDER_LABEL = { bybit: 'Bybit', bingx: 'BingX', mexc: 'MEXC' }
 
 /* ===== Імпорт виписки Монобанку ===== */
 const KIND_LABEL = { transfer: 'переказ', cash: 'готівка', income: 'надходження' }

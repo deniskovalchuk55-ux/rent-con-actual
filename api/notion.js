@@ -6,6 +6,7 @@
 //   обмежує записи Telegram ID користувача: читає лише свої, створює зі своїм ID,
 //   змінює й архівує тільки свої сторінки з цих баз.
 const { authFromRequest } = require('./_lib/telegram');
+const ledger = require('./_lib/ledger');
 
 const DB_WHITELIST = {
   // === Expense·Control ===
@@ -25,7 +26,9 @@ const DB_WHITELIST = {
   DB_GOAL_TX:         process.env.DB_GOAL_TX,
   // === Активи ===
   DB_ASSETS:          process.env.DB_ASSETS,
-  DB_ASSET_TX:        process.env.DB_ASSET_TX
+  DB_ASSET_TX:        process.env.DB_ASSET_TX,
+  // === Рух коштів (історія банків і бірж) — змінна необовʼязкова, базу знаходимо за назвою ===
+  DB_LEDGER:          process.env.DB_LEDGER
 };
 
 // Категорії Expense·Control бувають спільними (без Telegram ID) — їх бачать усі
@@ -72,6 +75,7 @@ module.exports = async (req, res) => {
     let dbId = null;
     if (database) {
       dbId = DB_WHITELIST[database];
+      if (!dbId && database === 'DB_LEDGER') dbId = await ledger.findLedger().catch(() => null);
       if (!dbId) return res.status(400).json({ error: 'Bad or missing database: ' + database });
     }
 
@@ -106,7 +110,8 @@ module.exports = async (req, res) => {
         const page = await notion(token, `/pages/${pageId}`, 'GET');
         if (page.status !== 200) return res.status(page.status).json(page.data);
         const parent = page.data.parent && page.data.parent.database_id;
-        const allowed = Object.values(DB_WHITELIST).filter(Boolean).map(norm);
+        const ledgerId = await ledger.findLedger().catch(() => null);
+        const allowed = [...Object.values(DB_WHITELIST), ledgerId].filter(Boolean).map(norm);
         if (!parent || !allowed.includes(norm(parent))) return res.status(403).json({ error: 'Немає доступу до цього запису' });
         const ownerProp = page.data.properties && page.data.properties[TG_COL];
         if (!ownerProp || ownerProp.number !== uid) return res.status(403).json({ error: 'Немає доступу до цього запису' });

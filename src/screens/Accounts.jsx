@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../state/store.js'
 import { openSheet } from '../state/ui.js'
-import { refreshBalances, anyProvider, canSeeBanks } from '../state/finance.js'
+import { refreshBalances, anyProvider, canSeeBanks, ledgerReady, enableHistory } from '../state/finance.js'
+import { flowSummary } from '../lib/domain/ledger.js'
 import { useMoney, Money } from '../ui/money.jsx'
 import { Icon } from '../ui/icons.jsx'
 import { Empty, Skeleton, Section, IconTile } from '../ui/kit.jsx'
@@ -69,6 +70,8 @@ export function Accounts() {
       {banks.map(p => <BankSection key={p.provider} p={p} />)}
       {exchanges.map(p => <ExchangeSection key={p.provider} p={p} />)}
 
+      <HistoryCard />
+
       {missing.length > 0 && (
         <Section title="Ще можна підключити">
           <button className="card pressable row" style={{ width: '100%', textAlign: 'left' }} onClick={() => openSheet('integrations')}>
@@ -86,6 +89,51 @@ export function Accounts() {
         <button className="btn" style={{ width: '100%' }} onClick={() => openSheet('integrations')}><Icon.link />Підключення й автоімпорт витрат</button>
       </div>
     </div>
+  )
+}
+
+// Історія операцій і аналітика по місяцях (база «Рух коштів» у Notion)
+function HistoryCard() {
+  const fin = useStore(s => s.finance)
+  const rows = useStore(s => s.data.ledger)
+  const rates = useStore(s => s.settings.rates)
+  const m = useMoney()
+  const [busy, setBusy] = useState(false)
+  if (!ledgerReady(fin.status)) {
+    const mono = (fin.providers || []).find(p => p.provider === 'mono')
+    return (
+      <Section title="Історія">
+        <div className="card">
+          <div className="row" style={{ gap: 12, alignItems: 'flex-start' }}>
+            <IconTile icon={Icon.chart} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 650 }}>Історія й аналітика по місяцях</div>
+              <div className="muted" style={{ fontSize: 13, marginTop: 3 }}>Усі операції з карток і бірж зберігатимуться в Notion: видно будь-який місяць, а в «Пульсі» — скільки прийшло й пішло.{mono && mono.webhook === 'other' ? ' Вебхук Монобанку зараз веде на інший сервіс — його буде замінено.' : ''}</div>
+            </div>
+          </div>
+          <button className="btn primary" style={{ width: '100%', marginTop: 14 }} disabled={busy} onClick={async () => { setBusy(true); await enableHistory(); setBusy(false) }}>
+            <Icon.check />{busy ? 'Вмикаю…' : 'Увімкнути історію'}
+          </button>
+        </div>
+      </Section>
+    )
+  }
+  const now = new Date()
+  const s = flowSummary(rows, new Date(now.getFullYear(), now.getMonth(), 1).getTime(), Date.now() + 1, rates)
+  const bf = fin.backfill
+  return (
+    <Section title="Історія">
+      <button className="card pressable row" style={{ width: '100%', textAlign: 'left', gap: 12 }} onClick={() => { haptic.tap(); openSheet('history', {}) }}>
+        <IconTile icon={Icon.chart} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 650 }}>Усі операції по місяцях</div>
+          <div className="muted num" style={{ fontSize: 13, marginTop: 2 }}>
+            {bf && bf.running ? <>Підтягую {bf.label}… ще {bf.left} міс.</> : <>Цього місяця: <span className="pos">+{m.fmt(s.in)}</span> · −{m.fmt(s.out)}</>}
+          </div>
+        </div>
+        <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />
+      </button>
+    </Section>
   )
 }
 
@@ -140,6 +188,9 @@ function ProviderError({ p }) {
   )
 }
 
+// Історія рахунку (якщо історія ще не ввімкнена — вікно запропонує її ввімкнути)
+const openHistory = source => { haptic.tap(); openSheet('history', { source }) }
+
 function BankSection({ p }) {
   const m = useMoney()
   const rates = useStore(s => s.settings.rates)
@@ -152,7 +203,7 @@ function BankSection({ p }) {
         <div className="stack">
           <div className="list">
             {cards.map(a => (
-              <div key={a.id} className="list-row static">
+              <button key={a.id} className="list-row" onClick={() => openHistory(a.name + (a.mask ? ' ' + a.mask : ''))}>
                 <IconTile icon={Icon.wallet} color="var(--text)" bg="var(--card-3)" />
                 <div className="main">
                   <div className="title">{a.name} <span className="faint" style={{ fontWeight: 500, fontSize: 13 }}>{a.mask}</span></div>
@@ -162,10 +213,10 @@ function BankSection({ p }) {
                   <div className={'amount ' + (a.balance < 0 ? 'neg' : '')}>{m.native(a.balance, a.currency)}</div>
                   {a.currency !== m.display && <div className="meta num">{m.fmtFrom(a.balance, a.currency)}</div>}
                 </div>
-              </div>
+              </button>
             ))}
             {jars.map(a => (
-              <div key={a.id} className="list-row static">
+              <button key={a.id} className="list-row" onClick={() => openHistory('Банка «' + a.name + '»')}>
                 <IconTile icon={Icon.target} color="var(--pos)" bg="var(--pos-soft)" />
                 <div className="main">
                   <div className="title">{a.name}</div>
@@ -177,19 +228,22 @@ function BankSection({ p }) {
                   ) : <div className="meta">банка</div>}
                 </div>
                 <div className="end"><div className="amount">{m.native(a.balance, a.currency)}</div></div>
-              </div>
+              </button>
             ))}
           </div>
-          {p.provider === 'mono' && (
-            <button className="remind" onClick={() => openSheet(p.webhook === 'on' ? 'monoImport' : 'integrations')}>
-              <span className="icon-tile" style={{ background: p.webhook === 'on' ? 'var(--pos-soft)' : 'var(--accent-soft)', color: p.webhook === 'on' ? 'var(--pos)' : 'var(--accent-text)' }}><Icon.bolt /></span>
+          {p.provider === 'mono' && (() => {
+            const imp = p.webhook === 'on' && p.hookImport
+            return (
+            <button className="remind" onClick={() => openSheet(imp ? 'monoImport' : 'integrations')}>
+              <span className="icon-tile" style={{ background: imp ? 'var(--pos-soft)' : 'var(--accent-soft)', color: imp ? 'var(--pos)' : 'var(--accent-text)' }}><Icon.bolt /></span>
               <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-                <b>{p.webhook === 'on' ? 'Витрати записуються самі' : 'Автоімпорт витрат вимкнено'}</b>
-                <span className="muted">{p.webhook === 'on' ? 'Імпортувати ще й минулий місяць' : 'Увімкни — кожна оплата карткою потрапить у витрати'}</span>
+                <b>{imp ? 'Витрати записуються самі' : 'Автоімпорт витрат вимкнено'}</b>
+                <span className="muted">{imp ? 'Імпортувати ще й минулий місяць' : 'Увімкни — кожна оплата карткою потрапить у витрати'}</span>
               </span>
               <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />
             </button>
-          )}
+            )
+          })()}
         </div>
       )}
     </Section>
@@ -235,6 +289,9 @@ function ExchangeSection({ p }) {
               <span className="link">{all ? 'Згорнути' : `Ще ${coins.length - 5} ${plural(coins.length - 5, 'монета', 'монети', 'монет')}`}</span>
             </button>
           )}
+          <button className="list-row" onClick={() => openHistory(p.label)} style={{ justifyContent: 'center' }}>
+            <span className="link">Історія поповнень і виведень</span>
+          </button>
         </div>
       )}
     </Section>

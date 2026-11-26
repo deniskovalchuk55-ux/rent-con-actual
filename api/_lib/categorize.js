@@ -104,4 +104,13 @@ function kindOf({ amount, mcc, title } = {}) {
   return 'expense';
 }
 
-module.exports = { GROUPS, groupOf, suggestCategory, kindOf };
+// Для історії й аналітики: як kindOf, але надходження з власних рахунків (обмін валют, з банки) — теж переказ,
+// щоб вони не роздували «Надійшло»
+const OWN_RX = /^(з|на) (гривнев|доларов|євро|eur|usd|pln|злот|чорн|біл|банки|банку|картки)|^переказ (на|з|між) (свою|власн|своїми)|^з банки|^на банку|^поповнення «|^обмін валют|^конвертац/;
+function flowOf({ amount, mcc, title } = {}) {
+  const a = Number(amount) || 0;
+  if (a > 0) return OWN_RX.test(lower(title)) ? 'transfer' : 'income';
+  return kindOf({ amount, mcc, title });
+}
+
+module.exports = { GROUPS, groupOf, suggestCategory, kindOf, flowOf };

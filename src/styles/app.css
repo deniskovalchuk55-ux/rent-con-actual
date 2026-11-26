@@ -198,6 +198,7 @@ img { max-width: 100%; display: block; }
 .section { margin-top: 26px; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 2px 12px; }
 .section-head h2 { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 20px; letter-spacing: -0.02em; }
+.link { font-weight: 600; color: var(--accent-text); }
 .section-head .link { font-size: 14px; font-weight: 600; color: var(--accent-text); padding: 6px 2px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 16px; }
 .card.tight { padding: 12px; }

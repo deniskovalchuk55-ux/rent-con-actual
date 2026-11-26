@@ -13,6 +13,9 @@ import { statusOf, periodProgress, nextPayText } from '../lib/domain/rent.js'
 import { accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, STATUS_LABEL, workByCategoryBetween } from '../lib/domain/work.js'
 import { monthKeyOf, toISO, today, UA_MONTHS, plural } from '../lib/dates.js'
 import { haptic } from '../lib/telegram.js'
+import { flowSummary } from '../lib/domain/ledger.js'
+import { CG_IDS } from '../lib/domain/finance.js'
+import { ledgerReady } from '../state/finance.js'
 
 export const STREAM = {
   rent: { label: 'Оренда', color: 'var(--blue)', soft: 'var(--blue-soft)' },
@@ -272,8 +275,43 @@ function ReportSection({ d, settings }) {
         {expLoaded === 'error' ? <div className="muted" style={{ fontSize: 14 }}>База витрат (Expense·Control) недоступна</div>
           : exp.length ? <ShareBars items={exp.slice(0, 8).map((e, i) => ({ id: e.id, label: e.name, value: e.usd, color: PALETTE[(i + 3) % PALETTE.length] }))} total={s.spent} format={v => m.fmt(v)} />
             : <div className="muted" style={{ fontSize: 14 }}>За цей період витрат не було</div>}
+        {modules.accounts && <AccountsFlows from={from} to={to} />}
       </div>
     </Section>
+  )
+}
+
+// Рух по рахунках за період звіту (база «Рух коштів»): що прийшло на картки й куди пішло
+function AccountsFlows({ from, to }) {
+  const m = useMoney()
+  const rows = useStore(s => s.data.ledger)
+  const fin = useStore(s => s.finance)
+  const rates = useStore(s => s.settings.rates)
+  if (!ledgerReady(fin.status) || !rows.length) return null
+  const coinPrice = c => { const meta = fin.coinMeta[CG_IDS[c]]; return meta && meta.price ? meta.price : null }
+  const f = flowSummary(rows, from, to, rates, coinPrice)
+  const lines = [
+    { label: 'Надійшло на картки', v: f.income, sign: '+', cls: 'pos' },
+    { label: 'Покупки карткою', v: f.expense, sign: '−' },
+    { label: 'Перекази', v: f.transferOut, sign: '−' },
+    { label: 'Перекази на рахунок', v: f.transferIn, sign: '+' },
+    { label: 'Готівка', v: f.cash, sign: '−' },
+    { label: 'Поповнення бірж', v: f.deposit, sign: '+' },
+    { label: 'Виведення з бірж', v: f.withdrawal, sign: '−' },
+  ].filter(x => x.v > 0.005)
+  return (
+    <>
+      <div className="divider" />
+      <div className="row" style={{ justifyContent: 'space-between', marginBottom: 10 }}>
+        <div className="label">Рахунки й біржі</div>
+        <button className="link" onClick={() => { haptic.tap(); openSheet('history', {}) }}>Історія</button>
+      </div>
+      {lines.length ? (
+        <div className="stack" style={{ gap: 0 }}>
+          {lines.map(x => <div className="kv" key={x.label}><span className="k">{x.label}</span><span className={'v num ' + (x.cls || '')}>{x.sign}{m.fmt(x.v)}</span></div>)}
+        </div>
+      ) : <div className="muted" style={{ fontSize: 14 }}>За цей період операцій немає</div>}
+    </>
   )
 }
 
