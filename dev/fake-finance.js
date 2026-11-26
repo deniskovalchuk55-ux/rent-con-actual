@@ -43,7 +43,7 @@ export function demoLedger(now = new Date()) {
     const n = 16 + Math.floor(r() * 12)
     for (let j = 0; j < n; j++) { const [t, mcc, lo, hi] = SHOPS[Math.floor(r() * SHOPS.length)]; mono('uah', at(1 + Math.floor(r() * dim), 9 + Math.floor(r() * 12)), t, mcc, -Math.round(lo + r() * (hi - lo))) }
     mono('uah', at(6, 11), 'На банку «Відпустка»', 4829, -2000)
-    mono('uah', at(12, 7), 'Netflix.com', 4899, -389)
+    mono('uah', at(12, 7), 'Netflix.com', 4899, i <= 1 ? -399 : -349) // з минулого місяця подорожчав
     mono('uah', at(22, 8), 'Spotify', 5815, -199)
     mono('uah', at(3, 9), 'Kyivstar', 4814, -250)
     if (r() > 0.5) mono('uah', at(14, 13), 'Банкомат ПриватБанк', 6011, -1000 - Math.round(r() * 2) * 500)
@@ -107,7 +107,8 @@ export function createFakeFinance(fake, { configured = { mono: true, bybit: true
   }
 
   const categories = () => fake.tables.DB_CAT_EXPENSES.filter(p => !p.archived).map(p => ({ id: p.id, name: (p.properties['Назва'].title[0] || {}).plain_text || '' }))
-  const iso = d => d.toISOString().slice(0, 10)
+  // дата за місцевим часом (як бачить людина), а не UTC — інакше після опівночі «вчора» з'їжджає на день
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
 
   function preview({ account }) {
     st.previewCalls++
@@ -118,7 +119,7 @@ export function createFakeFinance(fake, { configured = { mono: true, bybit: true
     // [днів тому, назва, mcc, сума в UAH (−) або валюті покупки, валюта покупки]
     const plan = acc.currency === 'UAH' ? [
       [0, 'Сільпо', 5411, -612.4], [1, 'BIEDRONKA 4471 WARSZAWA', 5411, -86.2, 'PLN'], [2, 'Bolt.eu/o/2511', 4121, -31.5, 'PLN'],
-      [3, 'Netflix.com', 4899, -389], [4, 'Пузата Хата', 5812, -284], [5, 'Переказ на картку', 4829, -2000],
+      [3, 'Netflix.com', 4899, -399], [4, 'Пузата Хата', 5812, -284], [5, 'Переказ на картку', 4829, -2000],
       [6, 'Аптека Подорожник', 5912, -437.8], [8, 'ZARA', 5651, -1899], [9, 'Сільпо', 5411, -945.1],
       [10, 'Банкомат ПриватБанк', 6011, -1500], [11, 'Від: Олена К.', 4829, 3500], [12, 'Kyivstar', 4814, -250],
       [14, 'Cinema City Arkadia', 7832, -38, 'PLN'], [15, 'Żabka Z4417', 5411, -24.9, 'PLN'], [17, 'Bolt.eu/o/2511', 4121, -27.0, 'PLN'],

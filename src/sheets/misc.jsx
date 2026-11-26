@@ -1,5 +1,5 @@
 // Швидке додавання, налаштування, курси, підтвердження.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore, getState, clearCache } from '../state/store.js'
 import { openSheet, closeSheet, replaceSheet, toast } from '../state/ui.js'
 import { setDisplay, setTheme, setModule, refreshRatesNow, setRatesManual, syncAll, setWorkMode } from '../state/actions.js'
@@ -8,7 +8,9 @@ import { Sheet } from '../ui/sheet.jsx'
 import { Avatar, Field, Segmented, Switch, TextInput, KV, IconTile } from '../ui/kit.jsx'
 import { CURRENCIES, SYM, CUR_NAME, parseAmount } from '../lib/money.js'
 import { monthKeyOf, today, toISO } from '../lib/dates.js'
-import { haptic } from '../lib/telegram.js'
+import { haptic, homeScreen } from '../lib/telegram.js'
+import { useLock, enableLock, disableLock } from '../state/lock.js'
+import { bioName } from '../ui/lock.jsx'
 import { getAuthMode } from '../lib/notion/api.js'
 
 export function QuickAddSheet({ sheetId, closing }) {
@@ -114,6 +116,8 @@ export function SettingsSheet({ sheetId, closing }) {
         <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />
       </button>
 
+      <DeviceSection platform={platform} />
+
       {s.modules.work && (
         <>
           <div className="label" style={{ margin: '22px 2px 10px' }}>Дохід від роботи у звітах</div>
@@ -141,6 +145,51 @@ export function SettingsSheet({ sheetId, closing }) {
         Rent·Control {typeof __VERSION__ !== 'undefined' ? __VERSION__ : ''} · {typeof __BUILT_AT__ !== 'undefined' ? new Date(__BUILT_AT__).toLocaleDateString('uk-UA') : ''}
       </div>
     </Sheet>
+  )
+}
+
+// «Цей пристрій»: вхід через біометрію та іконка на головному екрані — лише там, де Telegram це вміє
+function DeviceSection({ platform }) {
+  const info = useLock(st => st.info)
+  const enabled = useLock(st => st.enabled)
+  const [busy, setBusy] = useState(false)
+  const [home, setHome] = useState(null)
+  useEffect(() => {
+    if (!homeScreen.supported()) return
+    let alive = true
+    homeScreen.status().then(v => { if (alive) setHome(v) })
+    const off = homeScreen.onAdded(() => { setHome('added'); toast('Іконку додано на головний екран', { kind: 'success' }) })
+    return () => { alive = false; off() }
+  }, [])
+  const canLock = !!(info && info.available)
+  const canHome = home === 'missed' || home === 'unknown'
+  if (!canLock && !canHome) return null
+  const name = canLock ? bioName(info.type, platform) : ''
+  return (
+    <>
+      <div className="label" style={{ margin: '22px 2px 10px' }}>Цей пристрій</div>
+      <div className="stack">
+        {canLock && (
+          <Switch on={enabled} label={'Вхід через ' + name} sub="Під час відкриття й після 3 хв у фоні. Діє лише на цьому пристрої"
+            icon={<IconTile icon={info.type === 'face' ? Icon.scanFace : Icon.lock} color="var(--pos)" bg="var(--pos-soft)" />}
+            onChange={async v => {
+              if (busy) return
+              setBusy(true)
+              try { if (v) await enableLock(); else disableLock() } finally { setBusy(false) }
+            }} />
+        )}
+        {canHome && (
+          <button className="card pressable row" style={{ width: '100%', textAlign: 'left' }} onClick={() => { haptic.tap(); if (!homeScreen.add()) toast('Telegram не зміг додати іконку', { kind: 'error' }) }}>
+            <IconTile icon={Icon.smartphone} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600 }}>Іконка на головному екрані</div>
+              <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>Відкривати Rent·Control одним дотиком, без чату з ботом</div>
+            </div>
+            <Icon.plus style={{ width: 18, color: 'var(--text-3)' }} />
+          </button>
+        )}
+      </div>
+    </>
   )
 }
 

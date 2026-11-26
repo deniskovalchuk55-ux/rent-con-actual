@@ -30,8 +30,8 @@ export function RentMatches({ title = 'Схоже на оплату' }) {
             <IconTile icon={Icon.arrowDown} color="var(--pos)" bg="var(--pos-soft)" />
             <div className="main">
               <div className="title ellipsis">{x.client.name}</div>
-              <div className="meta ellipsis">{x.row.title} · <span className="pos num">+{m.native(x.row.amount, x.row.currency)}</span> · {fmtDateShort(new Date(x.row.date))}</div>
-              <div className="meta">{x.months} міс · {x.strong ? 'збігаються імʼя й сума' : 'збігається сума'}</div>
+              <div className="meta ellipsis"><span className="pos num">+{m.native(x.row.amount, x.row.currency)}</span> · {x.row.title}</div>
+              <div className="meta">{fmtDateShort(new Date(x.row.date))} · {x.months} міс · {x.strong ? 'збігаються імʼя й сума' : 'збігається сума'}</div>
               <div className="row" style={{ gap: 8, marginTop: 10 }}>
                 <button className="btn sm primary" onClick={() => { haptic.tap(); openSheet('pay', { clientId: x.client.id, initialMonths: x.months, initialDate: toISO(new Date(x.row.date)), matchId: x.id }) }}>
                   <Icon.check />Зарахувати

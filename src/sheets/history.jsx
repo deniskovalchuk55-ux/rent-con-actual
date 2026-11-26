@@ -116,7 +116,9 @@ export function HistorySheet({ sheetId, closing, source: initialSource }) {
         <div className="card row" style={{ gap: 10, marginBottom: 12, padding: '12px 14px' }}>
           <Icon.refresh className={bf.running ? 'spin' : ''} style={{ width: 16, color: 'var(--text-2)', flexShrink: 0 }} />
           <div className="muted" style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
-            {bf.running ? <>Підтягую минулі місяці: <b>{bf.label}</b> · ще {bf.left} міс.</> : <>Минулі місяці не підтягнулись: {bf.error}</>}
+            {bf.running
+              ? <>Підтягую минулі місяці: <b>{bf.label}</b>{bf.mins > 1 ? <> · ще ~{bf.mins} хв. Монобанк віддає одну виписку на хвилину, тож тримай застосунок відкритим або зайди пізніше — продовжу з того ж місця.</> : null}</>
+              : <>Минулі місяці не підтягнулись: {bf.error}</>}
           </div>
           {!bf.running && <button className="link" onClick={() => runBackfill()}>Ще раз</button>}
         </div>
@@ -199,6 +201,8 @@ export function RecurringSheet({ sheetId, closing }) {
   const total = list.reduce((acc, x) => acc + x.usd, 0)
   const upcoming = [...list].sort((a, b) => a.nextDate - b.nextDate)
   const manyAccounts = new Set(list.map(x => x.account)).size > 1
+  const changed = list.filter(x => x.change)
+  const amt = (a, cur) => (FIAT.has(cur) ? m.native(a, cur) : fmtQty(a) + ' ' + cur)
   return (
     <Sheet sheetId={sheetId} closing={closing} title="Регулярні платежі">
       {list.length ? (
@@ -207,6 +211,12 @@ export function RecurringSheet({ sheetId, closing }) {
             <div className="label">Щомісяця приблизно</div>
             <div className="display num" style={{ fontSize: 34, marginTop: 6 }}>{m.fmt(total)}</div>
             <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>{list.length} {list.length === 1 ? 'платіж' : list.length < 5 ? 'платежі' : 'платежів'} · за рік ≈ {m.fmt(total * 12)}</div>
+            {changed.map(x => (
+              <div key={'c' + x.key} className="price-change">
+                {x.change.pct > 0 ? <Icon.arrowUp /> : <Icon.arrowDown />}
+                <span><b>{x.title}</b> {x.change.pct > 0 ? 'подорожчав' : 'подешевшав'}: {amt(x.change.from, x.currency)} → {amt(x.change.to, x.currency)} <span className="num">({x.change.pct > 0 ? '+' : '−'}{Math.round(Math.abs(x.change.pct) * 100)}%)</span></span>
+              </div>
+            ))}
           </div>
           <div className="label" style={{ margin: '18px 4px 8px' }}>Найближчі списання</div>
           <div className="list">
@@ -220,8 +230,10 @@ export function RecurringSheet({ sheetId, closing }) {
                     <div className="meta ellipsis">наступне {fmtDateShort(new Date(x.nextDate))}{x.nextDate < Date.now() ? ' (мало бути)' : ''} · ~{x.day}-го{manyAccounts ? ' · ' + x.account : ''}</div>
                   </div>
                   <div className="end">
-                    <div className="amount">−{FIAT.has(x.currency) ? m.native(x.amount, x.currency) : fmtQty(x.amount) + ' ' + x.currency}</div>
-                    {x.currency !== m.display && <div className="meta num">{m.fmt(x.usd)}</div>}
+                    <div className="amount">−{amt(x.amount, x.currency)}</div>
+                    {x.change
+                      ? <div className="meta num" style={{ color: x.change.pct > 0 ? 'var(--warn)' : 'var(--pos)' }}>було {amt(x.change.from, x.currency)}</div>
+                      : x.currency !== m.display && <div className="meta num">{m.fmt(x.usd)}</div>}
                   </div>
                 </div>
               )

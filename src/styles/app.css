@@ -545,3 +545,15 @@ input[type='date'].input::-webkit-date-and-time-value { text-align: left; }
 .budget-input .input { width: 104px; height: 40px; text-align: right; padding: 0 10px; font-size: 15px; }
 .budget-lines .kv { display: block; }
 .budget-lines .kv .row { justify-content: space-between; }
+
+/* Екран блокування (вхід через біометрію) — непрозорий, над усім, включно з тостами */
+.lock-screen { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; flex-direction: column; justify-content: space-between; padding: calc(var(--safe-top) + 18vh) 24px calc(var(--safe-bottom) + 28px); text-align: center; animation: fade-in .18s ease; }
+.lock-mark { width: 76px; height: 76px; border-radius: 24px; margin: 0 auto 20px; display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); box-shadow: 0 10px 30px -10px var(--accent); }
+.lock-mark svg { width: 36px; height: 36px; }
+.lock-mark.busy { animation: lock-pulse 1.2s ease-in-out infinite; }
+@keyframes lock-pulse { 50% { transform: scale(.94); opacity: .8; } }
+.lock-title { font-size: 28px; margin-bottom: 8px; }
+.lock-text { max-width: 300px; margin: 0 auto; font-size: 15px; line-height: 1.45; text-wrap: balance; }
+.lock-actions { display: grid; gap: 10px; max-width: 420px; width: 100%; margin: 0 auto; }
+.price-change { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; padding: 9px 11px; border-radius: 12px; background: var(--warn-soft); color: var(--text); font-size: 13.5px; line-height: 1.4; }
+.price-change svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--warn); }

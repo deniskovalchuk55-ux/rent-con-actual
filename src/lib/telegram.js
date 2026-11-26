@@ -88,6 +88,69 @@ export const cloud = {
   },
 }
 
+// Біометрія (Bot API 7.2+): Face ID / Touch ID / відбиток. Telegram відхиляє запит, поки триває попередній,
+// тож запити йдуть по черзі; якщо клієнт не відповів — повертаємо null, а не висимо.
+const bm = () => { const w = tg(); return (w && supports('7.2') && w.BiometricManager) || null }
+const bioRead = m => ({ available: !!m.isBiometricAvailable, type: m.biometricType || 'unknown', requested: !!m.isAccessRequested, granted: !!m.isAccessGranted, deviceId: m.deviceId || '' })
+let bioQueue = Promise.resolve()
+function bioCall(fn, timeout) {
+  const run = () => new Promise(resolve => {
+    let done = false
+    const finish = v => { if (!done) { done = true; clearTimeout(t); resolve(v) } }
+    const t = setTimeout(() => finish(null), timeout)
+    try { fn(finish) } catch { finish(null) }
+  })
+  const p = bioQueue.then(run, run)
+  bioQueue = p.catch(() => {})
+  return p
+}
+export const bio = {
+  supported: () => !!bm(),
+  // { available, type: face|finger|unknown, requested, granted, deviceId } або null
+  init: () => bioCall(done => {
+    const m = bm()
+    if (!m) return done(null)
+    if (m.isInited) return done(bioRead(m))
+    m.init(() => done(bioRead(m)))
+  }, 5000),
+  requestAccess: reason => bioCall(done => { const m = bm(); if (!m) return done(false); m.requestAccess({ reason }, ok => done(!!ok)) }, 120e3).then(Boolean),
+  authenticate: reason => bioCall(done => { const m = bm(); if (!m) return done(false); m.authenticate({ reason }, ok => done(!!ok)) }, 120e3).then(Boolean),
+  // лише у відповідь на натискання користувача
+  openSettings() { try { bm()?.openSettings() } catch { /* */ } },
+}
+
+// Іконка застосунку на головному екрані телефона (Bot API 8.0+)
+export const homeScreen = {
+  supported: () => { const w = tg(); return !!(w && supports('8.0') && typeof w.addToHomeScreen === 'function') },
+  // unsupported | unknown | added | missed
+  status: () => new Promise(resolve => {
+    const w = tg()
+    if (!homeScreen.supported() || typeof w.checkHomeScreenStatus !== 'function') return resolve('unsupported')
+    const t = setTimeout(() => resolve('unknown'), 3000)
+    try { w.checkHomeScreenStatus(s => { clearTimeout(t); resolve(s || 'unknown') }) } catch { clearTimeout(t); resolve('unsupported') }
+  }),
+  add() { try { tg().addToHomeScreen(); return true } catch { return false } },
+  onAdded(cb) {
+    const w = tg()
+    if (!w || !w.onEvent) return () => {}
+    w.onEvent('homeScreenAdded', cb)
+    return () => { try { w.offEvent('homeScreenAdded', cb) } catch { /* */ } }
+  },
+}
+
+// Застосунок згорнули / знову відкрили: події Telegram 8.0+ (activated / deactivated) і видимість сторінки
+export function onActivity(onHide, onShow) {
+  const w = tg()
+  const vis = () => (document.visibilityState === 'hidden' ? onHide() : onShow())
+  document.addEventListener('visibilitychange', vis)
+  const tgEvents = !!(w && w.onEvent && supports('8.0'))
+  if (tgEvents) { w.onEvent('deactivated', onHide); w.onEvent('activated', onShow) }
+  return () => {
+    document.removeEventListener('visibilitychange', vis)
+    if (tgEvents) { try { w.offEvent('deactivated', onHide); w.offEvent('activated', onShow) } catch { /* */ } }
+  }
+}
+
 export function confirmClose(on) {
   const w = tg()
   if (!w || !supports('6.2')) return
