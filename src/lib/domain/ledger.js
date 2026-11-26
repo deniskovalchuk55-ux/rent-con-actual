@@ -77,3 +77,51 @@ export function groupByDay(rows, from, to, source = 'all') {
   }
   return days
 }
+
+// Пошук в історії: назва, коментар, рахунок або сума (8350, «8 350»)
+export function searchLedger(rows, query, source = 'all') {
+  const q = String(query || '').toLowerCase().replace(/\s+/g, ' ').trim()
+  if (!q) return []
+  const digits = q.replace(/[\s\u202f,.₴$€zł+−-]/g, '')
+  const isNum = /^\d+$/.test(digits)
+  return rows.filter(r => (source === 'all' || r.account === source) && (
+    String(r.title || '').toLowerCase().includes(q) || String(r.note || '').toLowerCase().includes(q) ||
+    String(r.account || '').toLowerCase().includes(q) || (isNum && String(Math.round(Math.abs(r.amount))).startsWith(digits))
+  ))
+}
+
+/* ----- Регулярні платежі: підписки, звʼязок, комуналка, щомісячні перекази ----- */
+// «Bolt.eu/o/2511» і «Bolt.eu/o/2512» — один отримувач: прибираємо цифри й службові знаки
+export const merchantKey = t => String(t || '').toLowerCase().replace(/[\d#*№]+/g, ' ').replace(/[/._\-]+\s*$/g, '').replace(/\s+/g, ' ').trim()
+const median = a => { const s = [...a].sort((x, y) => x - y); const n = s.length; return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : 0 }
+
+// Те, що списується приблизно раз на місяць і приблизно на ту саму суму (за останні пів року)
+export function recurringPayments(rows, rates, now = new Date()) {
+  const since = new Date(now.getFullYear(), now.getMonth() - 5, 1).getTime()
+  const groups = new Map()
+  for (const r of rows) {
+    if (!(r.amount < 0) || isJar(r) || !(r.kind === 'expense' || r.kind === 'transfer')) continue
+    const t = timeOf(r)
+    if (t < since) continue
+    const key = merchantKey(r.title) + '|' + r.currency
+    if (!key.startsWith('|')) (groups.get(key) || groups.set(key, []).get(key)).push(r)
+  }
+  const out = []
+  for (const list of groups.values()) {
+    const months = new Set(list.map(r => { const d = new Date(timeOf(r)); return d.getFullYear() * 12 + d.getMonth() }))
+    if (months.size < 3) continue // щонайменше три різні місяці
+    if (list.length / months.size > 1.5) continue // «Сільпо» по кілька разів на місяць — не підписка
+    const amounts = list.map(r => Math.abs(r.amount))
+    const med = median(amounts)
+    const similar = amounts.filter(a => Math.abs(a - med) <= Math.max(1, med * 0.2)).length
+    if (similar / amounts.length < 0.7) continue // суми скачуть — це не регулярний платіж
+    const sorted = [...list].sort((a, b) => timeOf(b) - timeOf(a))
+    const last = sorted[0]
+    const lastD = new Date(timeOf(last))
+    const next = new Date(lastD.getFullYear(), lastD.getMonth() + 1, lastD.getDate(), lastD.getHours(), lastD.getMinutes())
+    const usd = Math.abs(rowUSD({ ...last, amount: -med, usd: last.usd != null && last.amount ? (last.usd / last.amount) * -med : null }, rates))
+    out.push({ key: merchantKey(last.title), title: last.title, amount: med, currency: last.currency, usd, kind: last.kind, account: last.account,
+      lastDate: lastD.getTime(), nextDate: next.getTime(), months: months.size, day: lastD.getDate() })
+  }
+  return out.sort((a, b) => b.usd - a.usd)
+}

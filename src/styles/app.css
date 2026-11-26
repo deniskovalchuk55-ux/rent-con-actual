@@ -531,3 +531,9 @@ input[type='date'].input::-webkit-date-and-time-value { text-align: left; }
   .topbar h1 { font-size: 27px; }
   .tab span { font-size: 10px; }
 }
+
+/* розбивка прогнозу місяця під головною цифрою */
+.fc-box { position: relative; z-index: 1; margin: 12px 0 2px; padding: 8px 12px; border-radius: 14px; background: color-mix(in srgb, var(--card) 70%, transparent); border: 1px solid var(--line); animation: fade-in .2s ease; }
+.fc-box .kv { padding: 6px 0; font-size: 13.5px; }
+.fc-box .kv .k { color: var(--text-2); }
+@keyframes fade-in { from { opacity: 0; transform: translateY(-4px) } to { opacity: 1; transform: none } }

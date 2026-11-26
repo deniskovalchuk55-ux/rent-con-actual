@@ -14,6 +14,7 @@ import { accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, 
 import { monthKeyOf, toISO, today, UA_MONTHS, plural } from '../lib/dates.js'
 import { haptic } from '../lib/telegram.js'
 import { flowSummary } from '../lib/domain/ledger.js'
+import { monthForecast } from '../lib/domain/forecast.js'
 import { CG_IDS } from '../lib/domain/finance.js'
 import { ledgerReady } from '../state/finance.js'
 
@@ -50,11 +51,12 @@ export default function Home() {
   const monthName = UA_MONTHS[(curMonthIdx + 12) % 12]
   const isCurMonth = idx === series.length - 1
   const delta = !isCurMonth && prev && prev.earned > 0 ? (cur.earned - prev.earned) / prev.earned : null
-  const nowD = new Date()
-  const elapsed = Math.max(0.12, (nowD.getDate() - 1 + nowD.getHours() / 24) / new Date(nowD.getFullYear(), nowD.getMonth() + 1, 0).getDate())
   const lastEarned = series.length ? series[series.length - 1].earned : 0
-  const livePace = lastEarned > 0 && elapsed < 0.97 ? lastEarned / elapsed : null
-  const pace = isCurMonth ? livePace : null
+  // прогноз: уже зароблене + оренда, що має прийти до кінця місяця + робота за темпом останніх 4 тижнів
+  const fc = useMemo(() => monthForecast(d, mode, rates), [d, mode, rates])
+  const forecast = lastEarned + fc.rent + fc.work
+  const hasForecast = forecast > lastEarned + 0.5
+  const [showFc, setShowFc] = useState(false)
   const hasExp = d.expenses.length > 0 || loaded.expenses === true
   const firstLoad = !loaded.core
 
@@ -71,7 +73,7 @@ export default function Home() {
           <div className="hero">
             <div className="hero-top">
               <span className="label" style={{ color: 'var(--text-2)' }}>Зароблено · {monthName}</span>
-              {pace != null && <span className="pill acc"><Icon.sparkle style={{ width: 13 }} />темп ≈ {m.compact(pace)}/міс</span>}
+              {isCurMonth && hasForecast && <button className="pill acc" onClick={() => { haptic.select(); setShowFc(v => !v) }} aria-expanded={showFc}><Icon.sparkle style={{ width: 13 }} />прогноз ≈ {m.compact(forecast)}</button>}
               {delta != null && Math.abs(delta) >= 0.005 && (
                 <span className={'pill ' + (delta >= 0 ? 'pos' : 'neg')}>{delta >= 0 ? <Icon.arrowUp style={{ width: 13 }} /> : <Icon.arrowDown style={{ width: 13 }} />}{Math.abs(Math.round(delta * 100))}% до {UA_MONTHS[(curMonthIdx + 11) % 12].toLowerCase().slice(0, 3)}</span>
               )}
@@ -80,9 +82,17 @@ export default function Home() {
             <div className="hero-sub">
               {hasExp ? <>Витрати <b className="num" style={{ color: 'var(--text)' }}>{m.fmt(cur.spent)}</b> · залишок <b className={'num ' + (cur.net >= 0 ? 'pos' : 'neg')}>{m.fmt(cur.net, { sign: 'always' })}</b></> : <>Оренда, робота й розробка разом</>}
             </div>
+            {isCurMonth && hasForecast && showFc && (
+              <div className="fc-box">
+                <div className="kv"><span className="k">Уже зароблено</span><span className="v num">{m.fmt(lastEarned)}</span></div>
+                {fc.rent > 0 && <div className="kv"><span className="k">Оренда до кінця місяця · {fc.rentItems.length} {plural(fc.rentItems.length, 'оплата', 'оплати', 'оплат')}{fc.overdue ? `, ${fc.overdue} прострочено` : ''}</span><span className="v num">+{m.fmt(fc.rent)}</span></div>}
+                {fc.work > 0.5 && <div className="kv"><span className="k">Робота за темпом 4 тижнів · {m.compact(fc.perDay * 30)}/міс</span><span className="v num">+{m.fmt(fc.work)}</span></div>}
+                <div className="kv"><span className="k"><b>Прогноз на {monthName.toLowerCase()}</b></span><span className="v num"><b>{m.fmt(forecast)}</b></span></div>
+              </div>
+            )}
             <div className="hero-chart">
-              {/* поточний місяць ще не закінчився: остання точка — прогноз за темпом, пунктиром */}
-              <AreaChart values={series.map((s, i) => (i === series.length - 1 && livePace != null ? Math.max(s.earned, livePace) : s.earned))} dashedLast={livePace != null} height={96} onScrub={setScrub} />
+              {/* поточний місяць ще не закінчився: остання точка — прогноз, пунктиром */}
+              <AreaChart values={series.map((s, i) => (i === series.length - 1 && hasForecast ? forecast : s.earned))} dashedLast={hasForecast} height={96} onScrub={setScrub} />
               <div className="row" style={{ justifyContent: 'space-between', padding: '0 14px 10px', fontSize: 11, color: 'var(--text-3)', fontWeight: 600 }}>
                 {series.map((s, i) => <span key={s.key} style={{ color: i === idx ? 'var(--text)' : undefined }}>{s.label}</span>)}
               </div>
