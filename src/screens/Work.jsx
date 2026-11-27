@@ -6,10 +6,11 @@ import { useMoney, Money } from '../ui/money.jsx'
 import { Icon } from '../ui/icons.jsx'
 import { Section, Segmented, Empty, Skeleton, Bar, IconTile } from '../ui/kit.jsx'
 import { TopBar } from './common.jsx'
-import { accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, STATUS_LABEL, workEntryUSD, workMonths, workEarnedBetweenUSD, workHoursBetween, hasAnyFinal } from '../lib/domain/work.js'
-import { monthKeyOf, monthKeyLabel, shiftMonthKey, toISO, today, UA_WEEKDAYS_SHORT, parseDate, fmtRelDay, startOf, MS_DAY, plural } from '../lib/dates.js'
+import { accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, STATUS_LABEL, workEntryUSD, workMonths, workEarnedBetweenUSD, workHoursBetween, hasAnyFinal, misdatedPayouts, monthEndISO } from '../lib/domain/work.js'
+import { monthKeyOf, monthKeyLabel, shiftMonthKey, toISO, today, UA_WEEKDAYS_SHORT, UA_MONTHS, parseDate, fmtRelDay, startOf, MS_DAY, plural } from '../lib/dates.js'
 import { haptic } from '../lib/telegram.js'
-import { staleWorkCurrency } from '../state/actions.js'
+import { staleWorkCurrency, redatePayouts } from '../state/actions.js'
+import { toast } from '../state/ui.js'
 import { SYM_ANY } from '../lib/money.js'
 
 const STATUS_PILL = { paid: 'pos', partial: 'warn', pending: 'acc' }
@@ -71,6 +72,8 @@ export default function Work() {
               </button>
             )}
           </div>
+
+          <MisdatedPayouts payouts={d.payouts} />
 
           <div className="row" style={{ justifyContent: 'space-between', margin: '22px 2px 12px' }}>
             <h2 className="display" style={{ fontSize: 20, margin: 0, fontWeight: 700 }}>Дні</h2>
@@ -187,6 +190,30 @@ function DayList({ entries, categories }) {
           </button>
         )
       })}
+    </div>
+  )
+}
+
+const UA_MONTHS_LOC = ['січні', 'лютому', 'березні', 'квітні', 'травні', 'червні', 'липні', 'серпні', 'вересні', 'жовтні', 'листопаді', 'грудні']
+// Виплати за минулі місяці, внесені сьогоднішньою датою: у «Пульсі» (режим «Виплачене») усі падали в один місяць
+function MisdatedPayouts({ payouts }) {
+  const mode = useStore(s => s.settings.workEarnedMode)
+  const list = misdatedPayouts(payouts)
+  if (mode !== 'paid' || !list.length) return null
+  const months = [...new Set(list.map(p => p.month))].sort()
+  const names = months.map(k => UA_MONTHS[Number(k.slice(5, 7)) - 1].toLowerCase()).join(', ')
+  const dateMonths = [...new Set(list.map(p => monthKeyOf(p.date)))]
+  const when = dateMonths.length === 1 ? 'датою в ' + UA_MONTHS_LOC[Number(dateMonths[0].slice(5, 7)) - 1] : 'пізнішими датами'
+  return (
+    <div className="price-change" style={{ marginTop: 12 }}>
+      <Icon.alert />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {list.length} {plural(list.length, 'виплата', 'виплати', 'виплат')} за {names} {list.length === 1 ? 'записана' : 'записані'} {when}, тож у «Пульсі» {list.length === 1 ? 'вона рахується' : 'вони рахуються'} як отримане того місяця.
+        <button className="link" style={{ display: 'block', marginTop: 8, textAlign: 'left' }} onClick={() => {
+          const n = redatePayouts(list.map(p => p.id), p => monthEndISO(p.month))
+          toast(`Дати ${n} ${plural(n, 'виплати', 'виплат', 'виплат')} перенесено на кінець їхніх місяців`, { kind: 'success' })
+        }}>Перенести на кінець їхніх місяців</button>
+      </div>
     </div>
   )
 }

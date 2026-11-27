@@ -141,3 +141,26 @@ export function workMonths(entries, payouts) {
 export function defaultCategory(categories) {
   return categories.find(c => c.isDefault) || categories[0] || null
 }
+
+// За які місяці роботи виплати, отримані в цьому періоді (для підпису «виплати за лип, сер…» у режимі «Виплачене»)
+export function payoutMonthsBetween(payouts, from, to) {
+  const set = new Set()
+  for (const p of payouts) {
+    const t = parseDate(p.date).getTime()
+    if (t >= from && t < to && p.month) set.add(p.month)
+  }
+  return [...set].sort()
+}
+
+const monthIdx = key => { const [y, m] = String(key).split('-').map(Number); return y * 12 + (m - 1) }
+// останній день місяця роботи — дата за замовчуванням для виплати за минулий місяць (як у v3)
+export function monthEndISO(key) {
+  const [y, m] = String(key).split('-').map(Number)
+  const d = new Date(y, m, 0)
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
+// Виплати, датовані щонайменше на 2 місяці пізніше за місяць, за який вони: найчастіше це історію вносили
+// заднім числом з сьогоднішньою датою — і в режимі «Виплачене» все звалювалось в один місяць
+export function misdatedPayouts(payouts) {
+  return payouts.filter(p => p.month && p.date && monthIdx(monthKeyOf(p.date)) - monthIdx(p.month) >= 2)
+}

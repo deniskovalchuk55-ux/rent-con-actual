@@ -10,7 +10,7 @@ import { AreaChart, MonthBars, ShareBars, PALETTE } from '../ui/charts.jsx'
 import { TopBar } from './common.jsx'
 import { monthlySeries, periodBounds, periodLabel, shiftAnchor, isCurrentPeriod, periodSummary, expensesByCategory } from '../lib/domain/overview.js'
 import { statusOf, periodProgress, nextPayText } from '../lib/domain/rent.js'
-import { accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, STATUS_LABEL, workByCategoryBetween } from '../lib/domain/work.js'
+import { accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, STATUS_LABEL, workByCategoryBetween, payoutMonthsBetween } from '../lib/domain/work.js'
 import { monthKeyOf, toISO, today, UA_MONTHS, plural } from '../lib/dates.js'
 import { haptic } from '../lib/telegram.js'
 import { flowSummary } from '../lib/domain/ledger.js'
@@ -61,6 +61,11 @@ export default function Home() {
   const [showFc, setShowFc] = useState(false)
   const hasExp = d.expenses.length > 0 || loaded.expenses === true
   const firstLoad = !loaded.core
+  // «Виплачене»: робота рахується за датою виплат — показуємо, за які місяці гроші, щоб не дивувало
+  const paidMode = mode === 'paid' && modules.work
+  const [py, pm] = (cur ? cur.key : monthKeyOf(today())).split('-').map(Number)
+  const paidFor = paidMode && cur ? payoutMonthsBetween(d.payouts, new Date(py, pm - 1, 1).getTime(), new Date(py, pm, 1).getTime()).filter(k => k !== cur.key) : []
+  const monShort = k => UA_MONTHS[Number(k.slice(5, 7)) - 1].toLowerCase().slice(0, 3)
 
   return (
     <div className="screen">
@@ -74,7 +79,7 @@ export default function Home() {
         <div className="stagger">
           <div className="hero">
             <div className="hero-top">
-              <span className="label" style={{ color: 'var(--text-2)' }}>Зароблено · {monthName}</span>
+              <span className="label" style={{ color: 'var(--text-2)' }}>{paidMode ? 'Отримано' : 'Зароблено'} · {monthName}</span>
               {isCurMonth && hasForecast && <button className="pill acc" onClick={() => { haptic.select(); setShowFc(v => !v) }} aria-expanded={showFc}><Icon.sparkle style={{ width: 13 }} />прогноз ≈ {m.compact(forecast)}</button>}
               {delta != null && Math.abs(delta) >= 0.005 && (
                 <span className={'pill ' + (delta >= 0 ? 'pos' : 'neg')}>{delta >= 0 ? <Icon.arrowUp style={{ width: 13 }} /> : <Icon.arrowDown style={{ width: 13 }} />}{Math.abs(Math.round(delta * 100))}% до {UA_MONTHS[(curMonthIdx + 11) % 12].toLowerCase().slice(0, 3)}</span>
@@ -106,6 +111,7 @@ export default function Home() {
               <div className="kpi" key={k} style={{ padding: 12 }}>
                 <div className="k-label"><span className="dot" style={{ background: STREAM[k].color }} />{STREAM[k].label}</div>
                 <div className="k-value num" style={{ fontSize: 18 }}>{m.fmt(cur[k])}</div>
+                {k === 'work' && paidFor.length > 0 && <div className="faint" style={{ fontSize: 11.5, marginTop: 3, lineHeight: 1.3 }}>виплати за {paidFor.map(monShort).join(', ')}</div>}
               </div>
             ))}
           </div>
