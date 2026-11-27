@@ -13,8 +13,8 @@ const hostScheme = () => {
   try { return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark' } catch { return 'dark' }
 }
 window.__demoScheme = params.get('theme') || hostScheme()
-// ?banks=0 — демо без підключених банків і бірж (екран налаштування); ?ledger=0 — історія ще не ввімкнена
-const ledgerMode = params.get('banks') === '0' || params.get('ledger') === '0' ? 'off' : 'seeded'
+// ?banks=0 — демо без підключених банків і бірж (екран налаштування); ?ledger=0 — історія ще не ввімкнена; ?ledger=bad — база з хибною колонкою
+const ledgerMode = params.get('banks') === '0' || params.get('ledger') === '0' ? 'off' : params.get('ledger') === 'bad' ? 'bad' : 'seeded'
 const finance = params.get('banks') === '0'
   ? createFakeFinance(fake, { configured: { mono: false, bybit: false, bingx: false, mexc: false, enablebanking: false }, ledger: ledgerMode })
   : createFakeFinance(fake, { ledger: ledgerMode })

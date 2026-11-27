@@ -8,6 +8,8 @@ import { haptic } from '../lib/telegram.js'
 import { loadExpenses } from './actions.js'
 import { CG_IDS } from '../lib/domain/finance.js'
 
+// код помилки сервера (ledger-schema, ledger-access, …) лежить у тілі відповіді
+const errCode = e => (e && (e.code || (e.data && e.data.code))) || null
 const setFin = patch => setState(s => ({ ...s, finance: { ...s.finance, ...(typeof patch === 'function' ? patch(s.finance) : patch) } }))
 
 export const anyProvider = st => !!(st && st.providers && Object.values(st.providers).some(Boolean))
@@ -217,11 +219,14 @@ export async function syncExchangesToLedger({ force = false } = {}) {
 export async function setupLedger() {
   try {
     const r = await financeCall('ledger-setup', {}, { retries: 0 })
-    setFin(f => ({ status: f.status ? { ...f.status, ledger: { ready: true } } : f.status }))
+    setFin(f => ({ status: f.status ? { ...f.status, ledger: { ready: true } } : f.status, backfill: f.backfill && f.backfill.error ? null : f.backfill }))
     return r
   } catch (e) {
     haptic.error()
-    toast(e.message || 'Не вдалось створити базу в Notion', { kind: 'error', duration: 10000 })
+    const error = e.message || 'Не вдалось підключити базу в Notion'
+    // причину лишаємо на картці «Історія», а не лише в тості
+    setFin(f => ({ status: f.status ? { ...f.status, ledger: { ready: false, code: errCode(e), error } } : f.status }))
+    toast(error, { kind: 'error', duration: 10000 })
     return null
   }
 }
@@ -250,7 +255,8 @@ export function ledgerTick() {
 }
 
 /* ----- Минулі місяці: Монобанк дає 1 виписку на хвилину, тож тягнемо поступово, поки застосунок відкритий ----- */
-const BF_KEY = 'rc5:backfill'
+// v2: у першій версії помилка запису в Notion позначала місяць «готовим» — тягнемо все ще раз (дублі сервер відсіє)
+const BF_KEY = 'rc5:backfill2'
 const BF_MONTHS = 12
 const MONO_GAP = () => (typeof window !== 'undefined' && window.__rcMonoGap) || 61e3 // у демо пауза коротша
 let lastMonoCall = 0
@@ -287,13 +293,14 @@ let bfRunning = false
 export async function runBackfill() {
   if (bfRunning) return
   bfRunning = true
+  const skip = new Set() // біржа цього разу не віддала історію: пропускаємо до наступного запуску, але не позначаємо готовим
   try {
     for (;;) {
       const fin = getState().finance
       if (!ledgerReady(fin.status)) break
       const done = lsGet(BF_KEY) || {}
       const tasks = backfillTasks(fin)
-      const pending = tasks.filter(t => !isDone(done, t))
+      const pending = tasks.filter(t => !isDone(done, t) && !skip.has(t.id))
       const months = new Set(tasks.map(t => t.label)).size
       const left = new Set(pending.map(t => t.label)).size
       if (!pending.length) { setFin({ backfill: { running: false, total: months, left: 0 } }); break }
@@ -320,14 +327,26 @@ export async function runBackfill() {
           const r = await financeCall('exchange-history', { provider: t.provider, from: t.from, to: t.to }, { retries: 1 })
           entries = r.entries || []
         }
-        const created = entries.length ? await writeLedger(entries) : 0
+        let created = 0
+        try { created = entries.length ? await writeLedger(entries) : 0 } catch (e) { throw Object.assign(e, { ledgerWrite: true }) }
         lsSet(BF_KEY, { ...(lsGet(BF_KEY) || {}), [t.id]: Date.now() })
         if (created) loadLedger()
       } catch (e) {
         const code = e && e.status
+        const markDone = () => lsSet(BF_KEY, { ...(lsGet(BF_KEY) || {}), [t.id]: Date.now() })
+        // не вдалось записати в «Рух коштів» — це не «банк не віддав», а проблема бази: зупиняємось і кажемо чому
+        if (e && e.ledgerWrite) {
+          setFin(f => ({ backfill: { running: false, total: months, left, error: e.message || 'Не вдалось записати в Notion' }, status: f.status && code === 409 && errCode(e) !== 'ledger-write' ? { ...f.status, ledger: { ready: false, code: errCode(e), error: e.message } } : f.status }))
+          break
+        }
         if (code === 429) { lastMonoCall = Date.now(); continue } // Монобанк просить зачекати хвилину
-        // старі періоди біржа може не віддавати, закритого рахунку вже немає — такий шматок пропускаємо
-        if (t.type === 'ex' || code === 400 || code === 404) { lsSet(BF_KEY, { ...(lsGet(BF_KEY) || {}), [t.id]: Date.now() }); continue }
+        // закритого рахунку вже немає або період зарано — такий шматок пропускаємо
+        if (t.type === 'mono' && (code === 400 || code === 404)) { markDone(); continue }
+        if (t.type === 'ex') {
+          if (code === 400 || code === 404) markDone() // старі періоди біржа не віддає
+          else for (const x of tasks) if (x.type === 'ex' && x.provider === t.provider) skip.add(x.id) // ключ без прав на історію / збій — спробуємо наступного разу
+          continue
+        }
         // збій мережі чи ключа — зупиняємось і продовжимо наступного разу
         setFin({ backfill: { running: false, total: months, left, error: e.message || 'Помилка' } })
         break

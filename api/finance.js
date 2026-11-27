@@ -205,7 +205,8 @@ module.exports = async (req, res) => {
   if (body.action === 'status') {
     const st = status({ ...auth, host: req.headers['x-forwarded-host'] || req.headers.host });
     // база «Рух коштів» (історія й аналітика) — лише власнику
-    if (st.owner) st.ledger = { ready: !!(await ledger.findLedger().catch(() => null)) };
+    // (з причиною, якщо база не підходить: немає доступу, не ті типи колонок, хибний DB_LEDGER)
+    if (st.owner) st.ledger = await ledger.health({ fresh: !!body.fresh });
     return res.status(200).json(st);
   }
 
@@ -230,11 +231,20 @@ module.exports = async (req, res) => {
       }
 
       case 'ledger-setup':
-        return res.status(200).json({ ok: true, ...(await ledger.setupLedger()) });
+        try {
+          return res.status(200).json({ ok: true, ...(await ledger.setupLedger()) });
+        } catch (e) {
+          return res.status(409).json({ error: ledger.humanError(e), code: e.code || 'ledger-error' });
+        }
 
       case 'ledger-write': {
         const items = Array.isArray(body.items) ? body.items.slice(0, 30) : [];
-        const r = await ledger.append(items, ownerId());
+        let r;
+        // помилку запису в Notion віддаємо окремим кодом: застосунок не має плутати її з «банк не віддав період»
+        try { r = await ledger.append(items, ownerId()); } catch (e) {
+          console.error('ledger write failed', e.status, e.message);
+          return res.status(409).json({ error: ledger.humanError(e), code: e.code || 'ledger-write' });
+        }
         if (r.missing) return res.status(409).json({ error: 'Базу «Рух коштів» ще не створено', code: 'ledger-missing' });
         return res.status(200).json({ ok: true, ...r });
       }
@@ -278,7 +288,11 @@ module.exports = async (req, res) => {
         const settled = await Promise.allSettled(names.map(n => EXCHANGES[n].transfers(now, 30 * 864e5 - 60e3)));
         const price = await priceFn();
         const entries = settled.flatMap(x => (x.status === 'fulfilled' ? x.value.map(e => ledger.transferEntry(e, { priceUSD: price })) : []));
-        const r = await ledger.append(entries, ownerId());
+        let r;
+        try { r = await ledger.append(entries, ownerId()); } catch (e) {
+          console.error('ledger sync failed', e.status, e.message);
+          return res.status(409).json({ error: ledger.humanError(e), code: e.code || 'ledger-write' });
+        }
         return res.status(200).json({ ok: true, created: r.created, duplicates: r.duplicates, remaining: r.remaining, errors: names.filter((n, i) => settled[i].status === 'rejected') });
       }
 

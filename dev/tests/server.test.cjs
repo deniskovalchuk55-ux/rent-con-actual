@@ -75,7 +75,25 @@ function toStored(props) {
 // сторінка, на якій лежать бази застосунку, і бази, створені сервером (база «Рух коштів»)
 const PARENT_PAGE = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
 const createdDbs = new Map();
-const notionOpts = { parentAccess: true, searchCalls: 0 };
+const pageChildren = new Map(); // id сторінки → блоки всередині (вбудовані бази)
+const notionOpts = { parentAccess: true, searchCalls: 0, rejectTypeChange: false, failPages: null };
+// як Notion: у кожної колонки є type; можна перейменувати (name) і змінити тип
+const TYPE_KEYS = ['title', 'rich_text', 'number', 'select', 'multi_select', 'date', 'checkbox', 'url', 'email', 'phone_number', 'status', 'formula', 'relation', 'rollup', 'people', 'files'];
+function applyProps(target, patch) {
+  for (const [name, def] of Object.entries(patch || {})) {
+    if (def === null) { delete target[name]; continue; }
+    let key = name;
+    if (def.name && def.name !== name) { if (target[name]) { target[def.name] = target[name]; delete target[name]; } key = def.name; }
+    const type = def.type || TYPE_KEYS.find(k => k in def);
+    if (!type) continue;
+    if (notionOpts.rejectTypeChange && target[key] && target[key].type && target[key].type !== type) {
+      return { status: 400, body: { object: 'error', code: 'validation_error', message: `Cannot update property "${key}" type via the API.` } };
+    }
+    const { name: _n, ...rest } = def;
+    target[key] = { ...rest, type };
+  }
+  return null;
+}
 routes.push({
   match: c => c.host === 'api.notion.com',
   reply: c => {
@@ -85,16 +103,24 @@ routes.push({
       const q = (c.body && c.body.query) || '';
       return { body: { results: [...createdDbs.values()].filter(d => d.title[0].plain_text.includes(q)).map(d => ({ object: 'database', id: d.id, title: d.title, archived: false })), has_more: false } };
     }
+    if ((m = c.path.match(/^\/v1\/blocks\/([^/]+)\/children$/))) {
+      const kids = pageChildren.get(m[1]);
+      if (!kids) return { status: 404, body: { object: 'error', code: 'object_not_found', message: 'Could not find block with ID: ' + m[1] } };
+      return { body: { results: kids, has_more: false } };
+    }
     if (c.path === '/v1/databases' && c.method === 'POST') {
       if (!notionOpts.parentAccess || c.body.parent.page_id !== PARENT_PAGE) return { status: 404, body: { message: 'Could not find page with ID: ' + c.body.parent.page_id } };
       const id = uuid();
-      const d = { id, title: [{ plain_text: c.body.title[0].text.content }], properties: JSON.parse(JSON.stringify(c.body.properties)), parent: c.body.parent, is_inline: c.body.is_inline };
+      const props = {}; applyProps(props, JSON.parse(JSON.stringify(c.body.properties)));
+      const d = { id, title: [{ plain_text: c.body.title[0].text.content }], properties: props, parent: c.body.parent, is_inline: c.body.is_inline };
       createdDbs.set(id, d); dbSchemas[id] = d.properties;
       return { body: { object: 'database', ...d } };
     }
-    if ((m = c.path.match(/^\/v1\/databases\/([^/]+)$/)) && createdDbs.has(m[1])) {
-      const d = createdDbs.get(m[1]);
-      if (c.method === 'PATCH') Object.assign(d.properties, c.body.properties);
+    // Notion приймає ID і з дефісами, і без
+    const createdKey = raw => [...createdDbs.keys()].find(k => k.replace(/-/g, '') === String(raw).replace(/-/g, ''));
+    if ((m = c.path.match(/^\/v1\/databases\/([^/]+)$/)) && createdKey(m[1])) {
+      const d = createdDbs.get(createdKey(m[1]));
+      if (c.method === 'PATCH') { const err = applyProps(d.properties, c.body.properties); if (err) return err; }
       return { body: { object: 'database', ...d } };
     }
     if ((m = c.path.match(/^\/v1\/databases\/([^/]+)\/query$/))) {
@@ -104,11 +130,13 @@ routes.push({
     }
     if ((m = c.path.match(/^\/v1\/databases\/([^/]+)$/))) {
       const db = Object.values(DB).find(d => d === m[1] || d.replace(/-/g, '') === m[1].replace(/-/g, ''));
+      if (!db) return { status: 404, body: { object: 'error', code: 'object_not_found', message: 'Could not find database with ID: ' + m[1] + '. Make sure the relevant pages and databases are shared with your integration.' } };
       if (c.method === 'PATCH') { Object.assign(dbSchemas[db], c.body.properties); return { body: { properties: dbSchemas[db] } }; }
       return { body: { properties: dbSchemas[db] || {}, parent: { type: 'page_id', page_id: PARENT_PAGE }, is_inline: true } };
     }
     if (c.path === '/v1/pages' && c.method === 'POST') {
       const db = c.body.parent.database_id;
+      if (notionOpts.failPages) return { status: 400, body: { object: 'error', code: 'validation_error', message: notionOpts.failPages } };
       if (db === DB.DB_EXPENSES && !dbSchemas[DB.DB_EXPENSES]['Банк ID'] && c.body.properties['Банк ID']) return { status: 400, body: { message: 'Банк ID is not a property that exists.' } };
       const id = addPage(db, toStored(c.body.properties));
       return { body: pages.get(id) };
@@ -649,6 +677,8 @@ const lib = p => path.join(ROOT, 'api', p);
   });
 
   /* ===== Історія «Рух коштів» ===== */
+  const fullLedgerProps = () => ({ 'Назва': { title: {} }, 'Сума': { number: {} }, 'Валюта': { select: {} }, 'USD': { number: {} }, 'Дата': { date: {} }, 'Тип': { select: {} }, 'Рахунок': { select: {} }, 'Опис': { rich_text: {} }, 'Банк ID': { rich_text: {} }, 'Telegram ID': { number: {} } });
+  const ledgerRowsOf = id => [...pages.values()].filter(p => p.parent.database_id === id.replace(/-/g, '') && !p.archived);
   const ledgerRows = () => { const id = [...createdDbs.keys()][0]; return id ? [...pages.values()].filter(p => p.parent.database_id === id.replace(/-/g, '') && !p.archived) : []; };
   const prop = (p, n) => { const v = p.properties[n]; return v.title ? v.title[0].plain_text : v.rich_text ? (v.rich_text[0] || {}).plain_text : v.select ? v.select.name : v.date ? v.date.start : v.number; };
   await test('ledger: no access to the page with databases → clear 409 with what to do', async () => {
@@ -749,6 +779,112 @@ const lib = p => path.join(ROOT, 'api', p);
     assert.strictEqual(none.statusCode, 400);
   });
 
+  const handDb = (title, properties, extra = {}) => {
+    const id = uuid();
+    const props = {}; applyProps(props, properties);
+    createdDbs.set(id, { id, title: [{ plain_text: title }], properties: props, parent: { type: 'workspace' }, ...extra });
+    return id;
+  };
+  const dropDb = id => { createdDbs.delete(id); for (const [pid, pg] of pages) if (pg.parent.database_id === id.replace(/-/g, '')) pages.delete(pid); };
+  const anEntry = n => ({ bankId: 'mono:hand-' + n, title: 'Сільпо', amount: -100, currency: 'UAH', usd: -2.4, date: new Date().toISOString(), kind: 'expense', account: 'Чорна картка •1234', note: '' });
+
+  // далі — бази, створені «вручну»; базу з попередніх тестів ховаємо, щоб пошук за назвою її не знаходив
+  const stashedDbs = new Map(createdDbs); createdDbs.clear();
+  await test('ledger: DB_LEDGER may be a full Notion link, an ID with dashes, or a bare ID', async () => {
+    const L = fresh(lib('_lib/ledger.js'));
+    const id = '1a2b3c4d5e6f47a89b0c1d2e3f4a5b6c';
+    assert.strictEqual(L.envLedgerId(`https://www.notion.so/myspace/Rukh-koshtiv-${id}?v=99999999999999999999999999999999&pvs=4`), id);
+    assert.strictEqual(L.envLedgerId(`https://www.notion.so/${id}?v=abc`), id);
+    assert.strictEqual(L.envLedgerId('1a2b3c4d-5e6f-47a8-9b0c-1d2e3f4a5b6c'), '1a2b3c4d-5e6f-47a8-9b0c-1d2e3f4a5b6c');
+    assert.strictEqual(L.envLedgerId(` ${id.toUpperCase()} `), id);
+    assert.strictEqual(L.envLedgerId(''), null);
+  });
+
+  await test('ledger: DB_LEDGER pasted as a link works for writes and for the app proxy', async () => {
+    const id = handDb('Рух коштів', fullLedgerProps());
+    freshEnv({ ...ENV_FIN, NOTION_TOKEN: 'secret_x', DB_LEDGER: `https://www.notion.so/me/Ruh-${id.replace(/-/g, '')}?v=0000000000000000000000000000000a` });
+    const h = reloadFin();
+    const st = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    assert.deepStrictEqual(st.body.ledger, { ready: true });
+    const w = await call(h, { user: { id: OWNER }, body: { action: 'ledger-write', items: [anEntry(1)] } });
+    assert.strictEqual(w.body.created, 1, JSON.stringify(w.body));
+    const hp = fresh(notionPath);
+    const q = await call(hp, { user: { id: OWNER }, body: { action: 'query', database: 'DB_LEDGER' } });
+    assert.strictEqual(q.statusCode, 200, JSON.stringify(q.body)); assert.strictEqual(q.body.results.length, 1);
+    dropDb(id);
+  });
+
+  await test('ledger: DB_LEDGER pointing at the page that holds the database finds the database inside', async () => {
+    const id = handDb('Рух коштів', fullLedgerProps());
+    const pageId = uuid();
+    pageChildren.set(pageId, [{ object: 'block', id: uuid(), type: 'paragraph' }, { object: 'block', id, type: 'child_database', child_database: { title: 'Рух коштів' } }]);
+    freshEnv({ ...ENV_FIN, DB_LEDGER: pageId }); const h = reloadFin();
+    const st = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    assert.deepStrictEqual(st.body.ledger, { ready: true });
+    const w = await call(h, { user: { id: OWNER }, body: { action: 'ledger-write', items: [anEntry(2)] } });
+    assert.strictEqual(w.body.created, 1, JSON.stringify(w.body));
+    pageChildren.delete(pageId); dropDb(id);
+  });
+
+  await test('ledger: wrong DB_LEDGER → falls back to the title; nothing found → status says why', async () => {
+    const id = handDb('Рух коштів', fullLedgerProps());
+    freshEnv({ ...ENV_FIN, DB_LEDGER: '0123456789abcdef0123456789abcdef' }); let h = reloadFin();
+    let st = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    assert.deepStrictEqual(st.body.ledger, { ready: true }, JSON.stringify(st.body.ledger));
+    dropDb(id);
+    h = reloadFin();
+    st = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    assert.strictEqual(st.body.ledger.ready, false); assert.ok(/DB_LEDGER/.test(st.body.ledger.error) && /Connections/.test(st.body.ledger.error), st.body.ledger.error);
+    const set = await call(h, { user: { id: OWNER }, body: { action: 'ledger-setup' } });
+    notionOpts.parentAccess = true;
+    assert.ok(set.statusCode === 200 || set.statusCode === 409);
+    if (set.body.created) dropDb(set.body.id);
+  });
+
+  await test('ledger: hand-made columns — renamed spelling, text numbers and date fixed, text choices kept', async () => {
+    const id = handDb('Рух коштів', {
+      'Назва': { title: {} }, 'сума': { rich_text: {} }, 'Валюта': { rich_text: {} }, 'USD': { number: {} }, 'Дата': { rich_text: {} },
+      'Тип': { rich_text: {} }, 'Рахунок': { select: {} }, 'Опис': { rich_text: {} }, 'Банк Id': { rich_text: {} }, 'telegram id': { rich_text: {} },
+    });
+    freshEnv(ENV_FIN); const h = reloadFin();
+    const st = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    assert.deepStrictEqual(st.body.ledger, { ready: true }, JSON.stringify(st.body.ledger));
+    const props = createdDbs.get(id).properties;
+    assert.strictEqual(props['Сума'].type, 'number'); assert.strictEqual(props['Дата'].type, 'date'); assert.strictEqual(props['Telegram ID'].type, 'number');
+    assert.strictEqual(props['Банк ID'].type, 'rich_text'); assert.ok(!props['сума'] && !props['telegram id'] && !props['Банк Id']);
+    assert.strictEqual(props['Валюта'].type, 'rich_text'); assert.strictEqual(props['Тип'].type, 'rich_text');
+    const w = await call(h, { user: { id: OWNER }, body: { action: 'ledger-write', items: [anEntry(3)] } });
+    assert.strictEqual(w.body.created, 1, JSON.stringify(w.body));
+    const row = ledgerRowsOf(id)[0];
+    assert.strictEqual(prop(row, 'Валюта'), 'UAH'); assert.strictEqual(prop(row, 'Тип'), 'Покупка'); assert.strictEqual(prop(row, 'Рахунок'), 'Чорна картка •1234');
+    assert.ok(row.properties['Валюта'].rich_text && row.properties['Рахунок'].select, 'text column gets text, select column gets select');
+    dropDb(id);
+  });
+
+  await test('ledger: column type Notion refuses to change → clear 409 with the column and the type to set', async () => {
+    const id = handDb('Рух коштів', { ...fullLedgerProps(), 'Сума': { rich_text: {} } });
+    freshEnv(ENV_FIN); const h = reloadFin(); notionOpts.rejectTypeChange = true;
+    const st = await call(h, { user: { id: OWNER }, body: { action: 'status' } });
+    const set = await call(h, { user: { id: OWNER }, body: { action: 'ledger-setup' } });
+    const w = await call(h, { user: { id: OWNER }, body: { action: 'ledger-write', items: [anEntry(4)] } });
+    notionOpts.rejectTypeChange = false;
+    assert.strictEqual(st.body.ledger.ready, false); assert.strictEqual(st.body.ledger.code, 'ledger-schema');
+    assert.ok(/«Сума» має тип Text, а треба Number/.test(st.body.ledger.error), st.body.ledger.error);
+    assert.strictEqual(set.statusCode, 409); assert.ok(/«Сума»/.test(set.body.error), set.body.error);
+    assert.strictEqual(w.statusCode, 409, 'not 400/404: the app must not mark the month as done'); assert.strictEqual(w.body.code, 'ledger-schema');
+    dropDb(id);
+  });
+
+  await test('ledger: Notion rejects the page → 409 «ledger-write» with a readable reason', async () => {
+    const id = handDb('Рух коштів', fullLedgerProps());
+    freshEnv(ENV_FIN); const h = reloadFin(); notionOpts.failPages = 'Сума is expected to be number.';
+    const w = await call(h, { user: { id: OWNER }, body: { action: 'ledger-write', items: [anEntry(5)] } });
+    notionOpts.failPages = null;
+    assert.strictEqual(w.statusCode, 409); assert.strictEqual(w.body.code, 'ledger-write'); assert.ok(/Notion не прийняв запис/.test(w.body.error), w.body.error);
+    dropDb(id);
+  });
+
+  for (const [k, v] of stashedDbs) createdDbs.set(k, v);
   await test('ledger: app reads «Рух коштів» through the Notion proxy — only own rows', async () => {
     freshEnv({ ...ENV_FIN, NOTION_TOKEN: 'secret_x' });
     fresh(lib('_lib/ledger.js')); const h = fresh(notionPath);

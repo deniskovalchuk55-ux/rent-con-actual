@@ -1,6 +1,6 @@
 // «Рух коштів» — база в Notion з усіма операціями Монобанку й поповненнями/виведеннями на біржах.
 // З неї застосунок показує історію за будь-який місяць і аналітику по місяцях.
-// Базу знаходимо за назвою (змінна DB_LEDGER не обовʼязкова), а створюємо поруч з іншими базами.
+// Базу знаходимо за DB_LEDGER (ID чи посилання) або за назвою, а створюємо поруч з іншими базами.
 const { notion, queryAll, getRich } = require('./notion');
 const { flowOf } = require('./categorize');
 const { STABLE } = require('./http');
@@ -34,13 +34,49 @@ const titleOf = d => (d.title || []).map(t => t.plain_text || (t.text && t.text.
 // базу, створену вручну, впізнаємо за словами «Рух коштів» у назві (без урахування регістру й зайвих пробілів)
 const norm = s => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 const KEY = 'рух коштів';
-let cache = { id: null, missAt: 0, schemaAt: 0, titleProp: 'Назва' };
+let cache = { id: null, missAt: 0, schemaAt: 0, titleProp: 'Назва', types: {}, envError: null };
 
-// Знайти базу (без створення). Негативну відповідь памʼятаємо хвилину, щоб не шукати на кожному запиті.
+// DB_LEDGER можна вставити як ID, ID з дефісами або все посилання з Notion (беремо ID бази, а не ?v= вигляду)
+function envLedgerId(raw = process.env.DB_LEDGER) {
+  const v = String(raw || '').trim();
+  if (!v) return null;
+  const path = v.split(/[?#]/)[0];
+  const dashed = path.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/ig);
+  if (dashed) return dashed[dashed.length - 1].toLowerCase();
+  const plain = path.split(/[^0-9a-fA-F]+/).filter(x => x.length === 32);
+  return plain.length ? plain[plain.length - 1].toLowerCase() : v;
+}
+
+// ID з DB_LEDGER: сама база або сторінка, всередині якої вона лежить
+async function resolveEnvId(id) {
+  try {
+    const db = await notion(`/databases/${id}`, 'GET', null, { retries: 1 });
+    cache.envError = null;
+    return db.id || id;
+  } catch (e) {
+    if (e.status !== 400 && e.status !== 404) throw e;
+    try {
+      const kids = await notion(`/blocks/${id}/children?page_size=100`, 'GET', null, { retries: 1 });
+      const dbs = (kids.results || []).filter(b => b.type === 'child_database' && !b.archived && !b.in_trash);
+      const hit = dbs.find(b => norm(b.child_database && b.child_database.title).includes(KEY)) || (dbs.length === 1 ? dbs[0] : null);
+      if (hit) { cache.envError = null; return hit.id; }
+    } catch { /* це не сторінка з базою */ }
+    cache.envError = e.message || 'Notion HTTP ' + e.status;
+    console.warn('DB_LEDGER не відкривається:', cache.envError);
+    return null;
+  }
+}
+
+// Знайти базу (без створення): спершу DB_LEDGER, інакше пошуком за назвою.
+// Негативну відповідь памʼятаємо хвилину, щоб не шукати на кожному запиті.
 async function findLedger({ fresh = false } = {}) {
-  if (process.env.DB_LEDGER) return process.env.DB_LEDGER;
   if (cache.id) return cache.id;
   if (!fresh && Date.now() - cache.missAt < 60e3) return null;
+  const env = envLedgerId();
+  if (env) {
+    const id = await resolveEnvId(env);
+    if (id) { cache.id = id; return id; }
+  }
   const r = await notion('/search', 'POST', { query: 'Рух коштів', filter: { property: 'object', value: 'database' }, page_size: 25 });
   const live = (r.results || []).filter(d => d.object === 'database' && !d.archived && !d.in_trash);
   const hit = live.find(d => titleOf(d) === TITLE) || live.find(d => norm(titleOf(d)).includes(KEY));
@@ -57,23 +93,95 @@ async function parentPageFor(dbId) {
   return parent && parent.type === 'page_id' ? { pageId: parent.page_id, inline: !!db.is_inline } : null;
 }
 
-// Бракує колонок (базу створили вручну) — додаємо; назву колонки-заголовка беремо, яка є
-async function ensureSchema(dbId) {
-  if (Date.now() - cache.schemaAt < 3600e3) return;
+// Які типи колонок підходять. Валюту, тип і рахунок можна тримати й текстом — так часто створюють вручну.
+const ACCEPT = {
+  'Сума': ['number'], 'Валюта': ['select', 'rich_text'], 'USD': ['number'], 'Дата': ['date'],
+  'Тип': ['select', 'rich_text'], 'Рахунок': ['select', 'rich_text'], 'Опис': ['rich_text'], [BANK_COL]: ['rich_text'], 'Telegram ID': ['number'],
+};
+const TYPE_UA = {
+  title: 'Title', rich_text: 'Text', number: 'Number', select: 'Select', multi_select: 'Multi-select', status: 'Status', date: 'Date',
+  checkbox: 'Checkbox', url: 'URL', email: 'Email', phone_number: 'Phone', formula: 'Formula', relation: 'Relation', rollup: 'Rollup',
+  people: 'Person', files: 'Files & media', created_time: 'Created time', last_edited_time: 'Last edited time', unique_id: 'ID',
+};
+// «telegram id», «Банк Id», «сума » — та сама колонка
+const canon = s => String(s || '').toLowerCase().replace(/[\s_\-·.]+/g, '');
+
+async function patchProps(dbId, properties) {
+  const db = await notion(`/databases/${dbId}`, 'PATCH', { properties });
+  return db && db.properties;
+}
+
+// Базу створили вручну: перейменовуємо колонки з іншим написанням, додаємо відсутні, виправляємо типи.
+// Що виправити не вдалось — кажемо людською мовою, яку колонку й на який тип змінити.
+async function ensureSchema(dbId, { force = false } = {}) {
+  if (!force && Date.now() - cache.schemaAt < 3600e3) return;
   const db = await notion(`/databases/${dbId}`, 'GET');
-  const props = db.properties || {};
+  let props = db.properties || {};
   const titleEntry = Object.entries(props).find(([, v]) => v && v.type === 'title');
   cache.titleProp = titleEntry ? titleEntry[0] : 'Назва';
-  const missing = {};
-  for (const [name, def] of Object.entries(SCHEMA)) if (!def.title && !props[name]) missing[name] = def;
-  if (Object.keys(missing).length) await notion(`/databases/${dbId}`, 'PATCH', { properties: missing });
+
+  const renames = {};
+  for (const name of Object.keys(ACCEPT)) {
+    if (props[name]) continue;
+    const alt = Object.keys(props).find(k => k !== name && canon(k) === canon(name) && props[k].type !== 'title' && !renames[k]);
+    if (alt) renames[alt] = { name };
+  }
+  if (Object.keys(renames).length) {
+    try { props = (await patchProps(dbId, renames)) || props; } catch (e) { console.warn('ledger rename failed', e.message); }
+  }
+
+  const fixes = {};
+  for (const [name, types] of Object.entries(ACCEPT)) if (!props[name] || !types.includes(props[name].type)) fixes[name] = SCHEMA[name];
+  if (Object.keys(fixes).length) {
+    try { props = (await patchProps(dbId, fixes)) || props; } catch {
+      for (const [name, def] of Object.entries(fixes)) {
+        try { props = (await patchProps(dbId, { [name]: def })) || props; } catch (e) { console.warn('ledger column fix failed', name, e.message); }
+      }
+    }
+  }
+
+  const bad = Object.entries(ACCEPT).filter(([name, types]) => !props[name] || !types.includes(props[name].type));
+  if (bad.length) {
+    const list = bad.map(([name, types]) => (props[name]
+      ? `«${name}» має тип ${TYPE_UA[props[name].type] || props[name].type}, а треба ${TYPE_UA[types[0]]}`
+      : `немає колонки «${name}» (${TYPE_UA[types[0]]})`)).join('; ');
+    throw Object.assign(new Error(`База «Рух коштів» не підходить: ${list}. У Notion натисни на назву колонки → Edit property → Type, потім «Перевірити ще раз».`), { status: 409, code: 'ledger-schema' });
+  }
+  cache.types = Object.fromEntries(Object.keys(ACCEPT).map(n => [n, props[n].type]));
   cache.schemaAt = Date.now();
+}
+
+// Стан бази для застосунку: чи можна писати й читати історію, а якщо ні — що саме не так
+const MSG_NOT_FOUND = 'Не бачу базу «Рух коштів». Перевір: у назві бази є слова «Рух коштів»; до бази підключена інтеграція Notion (••• → Connections); якщо задано DB_LEDGER — після цього зроблено Redeploy.';
+let health$ = { at: 0, value: null };
+async function health({ fresh = false } = {}) {
+  if (!fresh && health$.value && Date.now() - health$.at < 60e3) return health$.value;
+  let value;
+  try {
+    const id = await findLedger({ fresh });
+    if (!id) value = { ready: false, code: 'ledger-missing', error: cache.envError ? `DB_LEDGER не відкривається (${cache.envError}). ${MSG_NOT_FOUND}` : null };
+    else { await ensureSchema(id, { force: fresh }); value = { ready: true }; }
+  } catch (e) {
+    value = { ready: false, code: e.code || 'ledger-error', error: humanError(e) };
+  }
+  health$ = { at: Date.now(), value };
+  return value;
+}
+
+// Помилки Notion — зрозумілою мовою
+function humanError(e) {
+  const m = String((e && e.message) || '');
+  if (e && /^ledger-/.test(String(e.code || ''))) return m;
+  if (e && e.status === 401) return 'Notion не приймає NOTION_TOKEN — перевір токен інтеграції у Vercel.';
+  if (e && e.status === 404) return 'Інтеграція Notion не бачить базу «Рух коштів»: відкрий базу → ••• → Connections → додай інтеграцію.';
+  if (/expected to be|is not a property that exists|Could not find property|validation/i.test(m)) return `Notion не прийняв запис (${m}). Перевір колонки в «Рух коштів».`;
+  return 'Notion: ' + (m || 'помилка');
 }
 
 // Знайти або створити базу поруч із базами застосунку
 async function setupLedger() {
   const found = await findLedger({ fresh: true });
-  if (found) { await ensureSchema(found); return { id: found, created: false }; }
+  if (found) { await ensureSchema(found, { force: true }); health$ = { at: Date.now(), value: { ready: true } }; return { id: found, created: false }; }
   for (const key of ['DB_CLIENTS', 'DB_EXPENSES', 'DB_PAYMENTS', 'DB_WORK_ENTRIES', 'DB_GOALS', 'DB_ASSETS']) {
     const id = process.env[key];
     if (!id) continue;
@@ -85,11 +193,12 @@ async function setupLedger() {
         parent: { type: 'page_id', page_id: parent.pageId }, is_inline: parent.inline,
         title: [{ type: 'text', text: { content: TITLE } }], properties: SCHEMA,
       });
-      cache = { id: db.id, missAt: 0, schemaAt: Date.now(), titleProp: 'Назва' };
+      cache = { id: db.id, missAt: 0, schemaAt: Date.now(), titleProp: 'Назва', types: {}, envError: null };
+      health$ = { at: Date.now(), value: { ready: true } };
       return { id: db.id, created: true };
     } catch { /* немає доступу до цієї сторінки — пробуємо іншу */ }
   }
-  throw Object.assign(new Error('Не вдалось створити базу «Рух коштів»: у інтеграції Notion немає доступу до сторінки з твоїми базами. Відкрий у Notion сторінку, де лежать бази → ••• → Connections → додай свою інтеграцію. Або створи базу «Рух коштів» сам, підключи до неї інтеграцію й натисни «Увімкнути» ще раз.'), { status: 409, code: 'ledger-access' });
+  throw Object.assign(new Error((cache.envError ? `DB_LEDGER не відкривається (${cache.envError}). ` : '') + 'Не вдалось ні знайти, ні створити базу «Рух коштів». Якщо створив її сам: у назві мають бути слова «Рух коштів», а до бази — підключена інтеграція Notion (••• → Connections). Інакше відкрий сторінку, де лежать твої бази → ••• → Connections → додай інтеграцію, і застосунок створить базу сам.'), { status: 409, code: 'ledger-access' });
 }
 
 /* ---------- записи ---------- */
@@ -108,16 +217,18 @@ function validEntry(e) {
 const text = s => (s ? [{ text: { content: String(s).slice(0, 1900) } }] : []);
 // у назвах опцій select Notion не приймає коми
 const opt = s => String(s || '').replace(/,/g, ' ').trim().slice(0, 100) || '—';
+// колонка-вибір або текстова (якщо базу створили вручну з текстом)
+const choice = (col, v) => (cache.types && cache.types[col] === 'rich_text' ? { rich_text: text(v || '—') } : { select: { name: opt(v) } });
 
 function buildProps(e, owner) {
   return {
     [cache.titleProp || 'Назва']: { title: text(e.title || TYPE_NAME[e.kind]) },
     'Сума': { number: Math.round(Number(e.amount) * 1e8) / 1e8 },
-    'Валюта': { select: { name: opt(e.currency) } },
+    'Валюта': choice('Валюта', e.currency),
     'USD': { number: e.usd == null ? null : Math.round(Number(e.usd) * 100) / 100 },
     'Дата': { date: { start: e.date } },
-    'Тип': { select: { name: TYPE_NAME[e.kind] } },
-    'Рахунок': { select: { name: opt(e.account) } },
+    'Тип': choice('Тип', TYPE_NAME[e.kind]),
+    'Рахунок': choice('Рахунок', e.account),
     'Опис': { rich_text: text(e.note) },
     [BANK_COL]: { rich_text: text(e.bankId) },
     'Telegram ID': { number: owner },
@@ -196,6 +307,6 @@ function transferEntry(e, { priceUSD } = {}) {
   };
 }
 
-function _reset() { cache = { id: null, missAt: 0, schemaAt: 0, titleProp: 'Назва' }; }
+function _reset() { cache = { id: null, missAt: 0, schemaAt: 0, titleProp: 'Назва', types: {}, envError: null }; health$ = { at: 0, value: null }; }
 
-module.exports = { TITLE, TYPES, TYPE_NAME, SCHEMA, findLedger, setupLedger, append, validEntry, buildProps, monoEntry, transferEntry, _reset };
+module.exports = { TITLE, TYPES, TYPE_NAME, SCHEMA, findLedger, setupLedger, health, humanError, envLedgerId, append, validEntry, buildProps, monoEntry, transferEntry, _reset };

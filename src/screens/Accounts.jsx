@@ -102,6 +102,7 @@ function HistoryCard() {
   const [busy, setBusy] = useState(false)
   if (!ledgerReady(fin.status)) {
     const mono = (fin.providers || []).find(p => p.provider === 'mono')
+    const why = fin.status && fin.status.ledger && fin.status.ledger.error
     return (
       <Section title="Історія">
         <div className="card">
@@ -112,8 +113,9 @@ function HistoryCard() {
               <div className="muted" style={{ fontSize: 13, marginTop: 3 }}>Усі операції з карток і бірж зберігатимуться в Notion: видно будь-який місяць, а в «Пульсі» — скільки прийшло й пішло.{mono && mono.webhook === 'other' ? ' Вебхук Монобанку зараз веде на інший сервіс — його буде замінено.' : ''}</div>
             </div>
           </div>
+          {why && <div className="ledger-why" role="alert"><Icon.alert />{why}</div>}
           <button className="btn primary" style={{ width: '100%', marginTop: 14 }} disabled={busy} onClick={async () => { setBusy(true); await enableHistory(); setBusy(false) }}>
-            <Icon.check />{busy ? 'Вмикаю…' : 'Увімкнути історію'}
+            {why ? <Icon.refresh className={busy ? 'spin' : ''} /> : <Icon.check />}{busy ? (why ? 'Перевіряю…' : 'Вмикаю…') : why ? 'Перевірити ще раз' : 'Увімкнути історію'}
           </button>
         </div>
       </Section>
@@ -133,7 +135,9 @@ function HistoryCard() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 650 }}>Усі операції по місяцях</div>
           <div className="muted num" style={{ fontSize: 13, marginTop: 2 }}>
-            {bf && bf.running ? <>Підтягую {bf.label}…{bf.mins > 1 ? <> ще ~{bf.mins} хв</> : null}</> : <>Цього місяця: <span className="pos">+{m.fmt(s.in)}</span> · −{m.fmt(s.out)}</>}
+            {bf && bf.running ? <>Підтягую {bf.label}…{bf.mins > 1 ? <> ще ~{bf.mins} хв</> : null}</>
+              : bf && bf.error ? <span style={{ color: 'var(--neg)' }}>Не підтягується — відкрий, там причина</span>
+              : <>Цього місяця: <span className="pos">+{m.fmt(s.in)}</span> · −{m.fmt(s.out)}</>}
           </div>
         </div>
         <Icon.chevronRight style={{ width: 18, color: 'var(--text-3)' }} />

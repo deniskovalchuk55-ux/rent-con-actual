@@ -74,8 +74,7 @@ module.exports = async (req, res) => {
     // resolve database id (only via whitelist)
     let dbId = null;
     if (database) {
-      dbId = DB_WHITELIST[database];
-      if (!dbId && database === 'DB_LEDGER') dbId = await ledger.findLedger().catch(() => null);
+      dbId = database === 'DB_LEDGER' ? await ledger.findLedger().catch(() => null) : DB_WHITELIST[database];
       if (!dbId) return res.status(400).json({ error: 'Bad or missing database: ' + database });
     }
 

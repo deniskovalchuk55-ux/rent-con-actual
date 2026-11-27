@@ -557,3 +557,6 @@ input[type='date'].input::-webkit-date-and-time-value { text-align: left; }
 .lock-actions { display: grid; gap: 10px; max-width: 420px; width: 100%; margin: 0 auto; }
 .price-change { display: flex; gap: 8px; align-items: flex-start; margin-top: 10px; padding: 9px 11px; border-radius: 12px; background: var(--warn-soft); color: var(--text); font-size: 13.5px; line-height: 1.4; }
 .price-change svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--warn); }
+/* Причина, чому історія не працює (база «Рух коштів» не знайдена / не ті колонки) */
+.ledger-why { display: flex; gap: 9px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--neg-soft); color: var(--text); font-size: 13.5px; line-height: 1.45; }
+.ledger-why svg { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--neg); }
