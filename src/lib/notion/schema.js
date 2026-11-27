@@ -207,7 +207,7 @@ export function parseExpense(page) {
   return {
     id: page.id,
     amount: getNumber(p, 'Сума') || 0,
-    currency: getSelect(p, 'Валюта') || 'UAH',
+    currency: choiceOf(p, 'Валюта') || 'UAH',
     date: dateOnly(getDate(p, 'Дата')) || todayISO(),
     categoryId: getRelationFirst(p, 'Категорія'),
     note: getRichText(p, 'Опис'),
@@ -217,10 +217,13 @@ export function parseExpense(page) {
 
 // «Рух коштів»: операції банків і бірж (пише сервер, застосунок лише читає)
 export const LEDGER_KIND = { 'Надходження': 'income', 'Покупка': 'expense', 'Переказ': 'transfer', 'Готівка': 'cash', 'Поповнення біржі': 'deposit', 'Виведення з біржі': 'withdrawal' }
+// у базі, створеній вручну, валюта, тип і рахунок бувають текстом, а не вибором
+const choiceOf = (p, n) => getSelect(p, n) || getRichText(p, n) || null
+
 export function parseLedger(page) {
   const p = page.properties
   const titleKey = Object.keys(p).find(k => p[k] && p[k].type === 'title') || 'Назва'
-  const type = getSelect(p, 'Тип')
+  const type = choiceOf(p, 'Тип')
   return {
     id: page.id,
     bankId: getRichText(p, 'Банк ID'),
@@ -230,7 +233,7 @@ export function parseLedger(page) {
     usd: getNumber(p, 'USD'),
     date: getDate(p, 'Дата') || todayISO(),
     kind: LEDGER_KIND[type] || (getNumber(p, 'Сума') > 0 ? 'income' : 'expense'),
-    account: getSelect(p, 'Рахунок') || '',
+    account: choiceOf(p, 'Рахунок') || '',
     note: getRichText(p, 'Опис'),
     tgId: getNumber(p, 'Telegram ID'),
   }

@@ -118,9 +118,9 @@ export function HistorySheet({ sheetId, closing, source: initialSource }) {
           <div className="muted" style={{ fontSize: 13.5, flex: 1, minWidth: 0 }}>
             {bf.running
               ? <>Підтягую минулі місяці: <b>{bf.label}</b>{bf.mins > 1 ? <> · ще ~{bf.mins} хв. Монобанк віддає одну виписку на хвилину, тож тримай застосунок відкритим або зайди пізніше — продовжу з того ж місця.</> : null}</>
-              : <>Минулі місяці не підтягнулись: {bf.error}</>}
+              : <span style={{ color: 'var(--text)' }}>Минулі місяці не підтягнулись: {bf.error}</span>}
           </div>
-          {!bf.running && <button className="link" onClick={() => runBackfill()}>Ще раз</button>}
+          {!bf.running && <button className="link" onClick={() => enableHistory()}>Ще раз</button>}
         </div>
       )}
 

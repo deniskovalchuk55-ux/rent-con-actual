@@ -75,7 +75,9 @@ function ledgerProps(e, owner = 111) {
 }
 
 export function createFakeFinance(fake, { configured = { mono: true, bybit: true, bingx: true, mexc: true, enablebanking: false }, ledger = 'seeded' } = {}) {
-  const st = { webhook: 'off', imp: false, ntf: false, log: ledger === 'seeded', failNext: null, previewCalls: 0, ledgerReady: ledger !== 'off', notifyTests: 0, statementCalls: 0 }
+  const st = { webhook: 'off', imp: false, ntf: false, log: ledger === 'seeded', failNext: null, previewCalls: 0, ledgerReady: ledger === 'seeded', notifyTests: 0, statementCalls: 0,
+    // ?ledger=bad — базу створили вручну з текстовою «Сумою»: сервер каже, що виправити (window.__ledgerFixed = true — виправили)
+    ledgerError: ledger === 'bad' ? 'База «Рух коштів» не підходить: «Сума» має тип Text, а треба Number. У Notion натисни на назву колонки → Edit property → Type, потім «Перевірити ще раз».' : null }
   if (ledger === 'seeded') { st.webhook = 'on'; for (const e of demoLedger()) fake.insert('DB_LEDGER', ledgerProps(e)) }
   const ledgerIds = () => new Set(fake.tables.DB_LEDGER.filter(p => !p.archived).map(p => (p.properties['Банк ID'].rich_text[0] || {}).plain_text))
   function writeLedger(items) {
@@ -167,7 +169,7 @@ export function createFakeFinance(fake, { configured = { mono: true, bybit: true
     if (st.failNext) { const f = st.failNext; st.failNext = null; return f }
     switch (body.action) {
       case 'status': return [200, { auth: 'on', owner: true, setup: { bot: true, owner: true, expensesDb: true, categoriesDb: true }, providers: configured, region: 'fra1',
-        ledger: { ready: st.ledgerReady }, notify: { bot: true, pollUrl: 'https://rent.example.app/api/finance?hook=poll&k=demo0000000000000000000000000000' } }]
+        ledger: st.ledgerReady ? { ready: true } : st.ledgerError ? { ready: false, code: 'ledger-schema', error: st.ledgerError } : { ready: false }, notify: { bot: true, pollUrl: 'https://rent.example.app/api/finance?hook=poll&k=demo0000000000000000000000000000' } }]
       case 'balances': return [200, balances()]
       case 'mono-webhook': {
         st.imp = body.import !== undefined ? !!body.import : body.enable !== false
@@ -175,8 +177,15 @@ export function createFakeFinance(fake, { configured = { mono: true, bybit: true
         st.webhook = st.imp || st.ntf || st.log ? 'on' : 'off'
         return [200, { ok: true, webhook: st.webhook, hookImport: st.webhook === 'on' && st.imp, hookNotify: st.webhook === 'on' && st.ntf, hookLog: st.webhook === 'on' && st.log }]
       }
-      case 'ledger-setup': { const created = !st.ledgerReady; st.ledgerReady = true; return [200, { ok: true, id: 'ledger-demo', created }] }
-      case 'ledger-write': return st.ledgerReady ? [200, writeLedger(body.items)] : [409, { error: 'Базу «Рух коштів» ще не створено', code: 'ledger-missing' }]
+      case 'ledger-setup': {
+        if (st.ledgerError && !window.__ledgerFixed) return [409, { error: st.ledgerError, code: 'ledger-schema' }]
+        const created = !st.ledgerReady && !st.ledgerError; st.ledgerReady = true; st.ledgerError = null
+        return [200, { ok: true, id: 'ledger-demo', created }]
+      }
+      case 'ledger-write':
+        // window.__ledgerWriteFail — Notion не приймає запис (для перевірки, що місяць не позначається «готовим»)
+        if (window.__ledgerWriteFail) return [409, { error: window.__ledgerWriteFail, code: 'ledger-write' }]
+        return st.ledgerReady ? [200, writeLedger(body.items)] : [409, { error: 'Базу «Рух коштів» ще не створено', code: 'ledger-missing' }]
       case 'mono-statement': {
         st.statementCalls++
         const acc = Object.values(DEMO_ACCOUNTS).find(a => a.ref === body.account)
