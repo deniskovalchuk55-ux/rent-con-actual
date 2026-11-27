@@ -618,6 +618,24 @@ export function updatePayout(payoutId, patch) {
   })
 }
 
+// Перенести дати виплат на кінець місяців, за які вони (одним махом, без тостів на кожну)
+export function redatePayouts(ids, dateOf) {
+  const uid = tgId()
+  const list = getState().data.payouts.filter(p => ids.includes(p.id))
+  if (!list.length) return 0
+  const next = new Map(list.map(p => [p.id, { ...p, date: dateOf(p) }]))
+  updateData(d => ({ ...d, payouts: d.payouts.map(p => next.get(p.id) || p) }))
+  for (const before of list) {
+    const after = next.get(before.id)
+    patchRemote(before.id, async () => updatePage(await real(before.id), S.buildPayoutProps({ ...after, categoryId: await real(after.categoryId) }, uid)), {
+      rollback: () => updateData(d => ({ ...d, payouts: d.payouts.map(p => (p.id === cur(before.id) ? withCurIds(before) : p)) })),
+      error: 'Не вдалось змінити дату виплати',
+    })
+  }
+  haptic.success()
+  return list.length
+}
+
 export function deletePayout(payoutId) {
   const id = cur(payoutId)
   const before = findPayout(id)

@@ -7,7 +7,7 @@ import { useMoney } from '../ui/money.jsx'
 import { Icon } from '../ui/icons.jsx'
 import { Sheet } from '../ui/sheet.jsx'
 import { Field, TextInput, AmountInput, DateInput, Segmented, Stepper, Switch, KV, Empty, Bar, IconTile } from '../ui/kit.jsx'
-import { workEntryUSD, accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, categoriesInMonth, categoryStatus, STATUS_LABEL, hasAnyFinal, defaultCategory } from '../lib/domain/work.js'
+import { workEntryUSD, accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, categoriesInMonth, categoryStatus, STATUS_LABEL, hasAnyFinal, defaultCategory, monthEndISO } from '../lib/domain/work.js'
 import { fmtDate, monthKeyLabel, today, toISO, monthKeyOf } from '../lib/dates.js'
 import { parseAmount, formatMoney, SYM_ANY } from '../lib/money.js'
 import { haptic } from '../lib/telegram.js'
@@ -136,14 +136,16 @@ export function CategorySheet({ sheetId, closing, id }) {
         </div>
       )}
       {editing && !curChanged && stale && (
-        <div className="price-change" style={{ marginTop: 14, alignItems: 'center' }}>
+        <div className="price-change" style={{ marginTop: 14 }}>
           <Icon.alert />
-          <span style={{ flex: 1 }}>{stale.count} {plural(stale.count, 'запис', 'записи', 'записів')} цієї категорії в {sym(stale.from)}, а ставка — в {sym(editing.cur)}. Через це суми рахуються не в тій валюті.</span>
-          <button className="link" onClick={() => {
-            const res = relabelWorkCurrency(editing.id, stale.from, editing.cur, { hourlyOnly: true })
-            haptic.success()
-            toast(`Валюту змінено в ${res.entries} записах: тепер ${sym(editing.cur)}`, { kind: 'success' })
-          }}>Перевести в {sym(editing.cur)}</button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {stale.count} {plural(stale.count, 'запис', 'записи', 'записів')} цієї категорії в {sym(stale.from)}, а ставка — в {sym(editing.cur)}. Через це суми рахуються не в тій валюті.
+            <button className="link" style={{ display: 'block', marginTop: 8, textAlign: 'left' }} onClick={() => {
+              const res = relabelWorkCurrency(editing.id, stale.from, editing.cur, { hourlyOnly: true })
+              haptic.success()
+              toast(`Валюту змінено в ${res.entries} записах: тепер ${sym(editing.cur)}`, { kind: 'success' })
+            }}>Перевести в {sym(editing.cur)}</button>
+          </div>
         </div>
       )}
       <div style={{ marginTop: 14 }}><Switch on={isDefault} onChange={setIsDefault} label="За замовчуванням" sub="Обирається першою в новому записі" /></div>
@@ -231,7 +233,8 @@ export function PayoutSheet({ sheetId, closing, month: month0, id }) {
   const [type, setType] = useState(editing ? editing.type : 'advance')
   const [amount, setAmount] = useState(editing ? num(editing.amount) : '')
   const [cur, setCur] = useState(editing ? editing.cur : display)
-  const [date, setDate] = useState(editing ? editing.date : toISO(today()))
+  // виплата за минулий місяць: за замовчуванням — його останній день, а не сьогодні (інакше в «Виплаченому» вона ляже не туди)
+  const [date, setDate] = useState(editing ? editing.date : month < monthKeyOf(today()) ? monthEndISO(month) : toISO(today()))
   const [catId, setCatId] = useState(editing ? editing.categoryId || '' : '')
   const [err, setErr] = useState('')
   const remainingInCur = m.convert(remainingUSD, 'USD', cur)
