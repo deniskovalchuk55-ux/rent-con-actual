@@ -2,14 +2,14 @@
 import { useState } from 'react'
 import { useDerived, useStore } from '../state/store.js'
 import { openSheet, closeSheet, toast } from '../state/ui.js'
-import { addWorkEntry, updateWorkEntry, deleteWorkEntry, saveCategory, deleteCategory, addPayout, updatePayout, deletePayout } from '../state/actions.js'
+import { addWorkEntry, updateWorkEntry, deleteWorkEntry, saveCategory, deleteCategory, addPayout, updatePayout, deletePayout, workCurrencyScope, relabelWorkCurrency, staleWorkCurrency } from '../state/actions.js'
 import { useMoney } from '../ui/money.jsx'
 import { Icon } from '../ui/icons.jsx'
 import { Sheet } from '../ui/sheet.jsx'
 import { Field, TextInput, AmountInput, DateInput, Segmented, Stepper, Switch, KV, Empty, Bar, IconTile } from '../ui/kit.jsx'
 import { workEntryUSD, accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, categoriesInMonth, categoryStatus, STATUS_LABEL, hasAnyFinal, defaultCategory } from '../lib/domain/work.js'
 import { fmtDate, monthKeyLabel, today, toISO, monthKeyOf } from '../lib/dates.js'
-import { parseAmount, formatMoney } from '../lib/money.js'
+import { parseAmount, formatMoney, SYM_ANY } from '../lib/money.js'
 import { haptic } from '../lib/telegram.js'
 
 const STATUS_PILL = { paid: 'pos', partial: 'warn', pending: 'acc' }
@@ -106,18 +106,46 @@ export function CategorySheet({ sheetId, closing, id }) {
   const [cur, setCur] = useState(editing ? editing.cur : display)
   const [isDefault, setIsDefault] = useState(editing ? editing.isDefault : d.workCategories.length === 0)
   const [err, setErr] = useState('')
+  // змінили валюту — найчастіше це виправлення («ставка не в $, а в zł»): пропонуємо виправити й старі записи
+  const curChanged = !!editing && cur !== editing.cur
+  const scope = curChanged ? workCurrencyScope(editing.id, editing.cur) : { entries: [], payouts: [] }
+  const oldCount = scope.entries.length + scope.payouts.length
+  const [relabel, setRelabel] = useState(true)
+  const stale = editing ? staleWorkCurrency(d).find(x => x.category.id === editing.id) : null
   const save = () => {
     const r = parseAmount(rate)
     if (!name.trim()) return setErr('Вкажи назву')
     if (!(r > 0)) return setErr('Вкажи ставку')
+    const fixOld = curChanged && relabel && oldCount > 0
+    const res = fixOld ? relabelWorkCurrency(editing.id, editing.cur, cur) : null
     saveCategory({ id: editing ? editing.id : undefined, name: name.trim(), rate: r, cur, isDefault })
-    toast('Категорію збережено', { kind: 'success' })
+    toast(res ? `Категорію збережено. Валюту змінено в ${res.entries + res.payouts} старих записах` : 'Категорію збережено', { kind: 'success' })
     closeSheet(sheetId)
   }
+  const sym = c => SYM_ANY[c] || c
+  const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many)
   return (
     <Sheet sheetId={sheetId} closing={closing} title={editing ? 'Категорія' : 'Нова категорія'} footer={<button className="btn primary" onClick={save}>Зберегти</button>}>
       <Field label="Назва"><TextInput value={name} onChange={setName} placeholder="Будова" autoFocus={!editing} /></Field>
       <Field label="Ставка за годину" hint="Підставляється в нові записи"><AmountInput value={rate} onChange={setRate} cur={cur} onCur={setCur} placeholder="15" /></Field>
+      {curChanged && oldCount > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <Switch on={relabel} onChange={setRelabel}
+            label={`Змінити й у старих записах (${oldCount})`}
+            sub={`${[scope.entries.length && `${scope.entries.length} ${plural(scope.entries.length, 'запис', 'записи', 'записів')}`, scope.payouts.length && `${scope.payouts.length} ${plural(scope.payouts.length, 'виплата', 'виплати', 'виплат')}`].filter(Boolean).join(' і ')} у ${sym(editing.cur)} стануть у ${sym(cur)} — числа ті самі. Вимкни, якщо раніше справді платили в ${sym(editing.cur)}`} />
+        </div>
+      )}
+      {editing && !curChanged && stale && (
+        <div className="price-change" style={{ marginTop: 14, alignItems: 'center' }}>
+          <Icon.alert />
+          <span style={{ flex: 1 }}>{stale.count} {plural(stale.count, 'запис', 'записи', 'записів')} цієї категорії в {sym(stale.from)}, а ставка — в {sym(editing.cur)}. Через це суми рахуються не в тій валюті.</span>
+          <button className="link" onClick={() => {
+            const res = relabelWorkCurrency(editing.id, stale.from, editing.cur, { hourlyOnly: true })
+            haptic.success()
+            toast(`Валюту змінено в ${res.entries} записах: тепер ${sym(editing.cur)}`, { kind: 'success' })
+          }}>Перевести в {sym(editing.cur)}</button>
+        </div>
+      )}
       <div style={{ marginTop: 14 }}><Switch on={isDefault} onChange={setIsDefault} label="За замовчуванням" sub="Обирається першою в новому записі" /></div>
       {err && <div className="pill neg" style={{ marginTop: 12, height: 'auto', padding: '8px 12px' }}>{err}</div>}
       {editing && d.workCategories.length > 1 && (

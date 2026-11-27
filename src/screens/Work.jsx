@@ -9,6 +9,8 @@ import { TopBar } from './common.jsx'
 import { accruedUSDForMonth, paidUSDForMonth, hoursForMonth, monthPayoutStatus, STATUS_LABEL, workEntryUSD, workMonths, workEarnedBetweenUSD, workHoursBetween, hasAnyFinal } from '../lib/domain/work.js'
 import { monthKeyOf, monthKeyLabel, shiftMonthKey, toISO, today, UA_WEEKDAYS_SHORT, parseDate, fmtRelDay, startOf, MS_DAY, plural } from '../lib/dates.js'
 import { haptic } from '../lib/telegram.js'
+import { staleWorkCurrency } from '../state/actions.js'
+import { SYM_ANY } from '../lib/money.js'
 
 const STATUS_PILL = { paid: 'pos', partial: 'warn', pending: 'acc' }
 const fmtH = h => (Math.round(h * 10) / 10).toString().replace('.', ',')
@@ -191,8 +193,17 @@ function DayList({ entries, categories }) {
 
 function Categories({ cats }) {
   const m = useMoney()
+  const d = useDerived()
+  const stale = staleWorkCurrency(d)
   return (
     <Section title="Категорії" action={<button className="link" onClick={() => openSheet('category', {})}>Нова</button>}>
+      {stale.map(x => (
+        <button key={'st' + x.category.id} className="price-change pressable" style={{ width: '100%', textAlign: 'left', marginTop: 0, marginBottom: 10, border: 0 }}
+          onClick={() => { haptic.tap(); openSheet('category', { id: x.category.id }) }}>
+          <Icon.alert />
+          <span style={{ flex: 1 }}>«{x.category.name}»: {x.count} {plural(x.count, 'запис', 'записи', 'записів')} у {SYM_ANY[x.from] || x.from}, а ставка категорії — у {SYM_ANY[x.category.cur] || x.category.cur}, тож суми рахуються не в тій валюті. <b>Виправити</b></span>
+        </button>
+      ))}
       {cats.length ? (
         <div className="chips" style={{ flexWrap: 'wrap', overflow: 'visible', margin: 0, padding: 0 }}>
           {cats.map(c => (
