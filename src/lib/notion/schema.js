@@ -1,5 +1,6 @@
 // Контракт з базами Notion. Назви колонок, типи й формати записів — ті самі, що у v3,
 // щоб нова версія читала й писала твої бази без жодних змін у Notion.
+import { normCur } from '../money.js'
 
 export const COL = {
   // Клієнти
@@ -43,6 +44,8 @@ export function getTitle(props, name) { const p = props[name]; return p && p.tit
 export function getRichText(props, name) { const p = props[name]; return p && p.rich_text ? p.rich_text.map(t => t.plain_text || '').join('') : '' }
 export function getNumber(props, name) { const p = props[name]; return p && p.number != null ? p.number : null }
 export function getSelect(props, name) { const p = props[name]; return p && p.select ? p.select.name : null }
+// валюта з Notion — завжди кодом (USD / UAH / PLN …), навіть якщо в базі вписано «zł» чи «грн»
+const curSel = (props, name) => normCur(getSelect(props, name))
 export function getDate(props, name) { const p = props[name]; return p && p.date ? p.date.start : null }
 export function getCheckbox(props, name) { const p = props[name]; return !!(p && p.checkbox) }
 export function getRelationFirst(props, name) { const p = props[name]; return p && p.relation && p.relation.length ? p.relation[0].id : null }
@@ -65,12 +68,12 @@ export function parseClient(page) {
     id: page.id,
     name: getTitle(p, COL.CL_NAME),
     rate: getNumber(p, COL.CL_RATE) || 0,
-    cur: getSelect(p, COL.CL_CUR) || 'USD',
+    cur: curSel(p, COL.CL_CUR) || 'USD',
     start: dateOnly(getDate(p, COL.CL_START)) || todayISO(),
     phone: getRichText(p, COL.CL_PHONE),
     tg: getRichText(p, COL.CL_TG),
     setupAmount: getNumber(p, COL.CL_SETUP_AMT) || 0,
-    setupCur: getSelect(p, COL.CL_SETUP_CUR) || 'USD',
+    setupCur: curSel(p, COL.CL_SETUP_CUR) || 'USD',
     payMode: getSelect(p, COL.CL_PAYMODE) || 'prepaid',
     bonusDays: getNumber(p, COL.CL_BONUS_DAYS) || 0,
     referredBy: getRelationFirst(p, COL.CL_REF),
@@ -90,7 +93,7 @@ export function parsePayment(page) {
     date: dateOnly(getDate(p, COL.PAY_DATE)) || todayISO(),
     months: getNumber(p, COL.PAY_MONTHS) || 0,
     amountNative: getNumber(p, COL.PAY_AMT) || 0,
-    cur: getSelect(p, COL.PAY_CUR) || null,
+    cur: curSel(p, COL.PAY_CUR) || null,
     tgId: getNumber(p, COL.TG_ID),
     created: page.created_time || null,
   }
@@ -104,11 +107,11 @@ export function parseWorkEntry(page) {
     kind: getSelect(p, COL.WE_KIND) || 'hourly',
     hours: getNumber(p, COL.WE_HOURS) || 0,
     rate: getNumber(p, COL.WE_RATE) || 0,
-    rateCur: getSelect(p, COL.WE_RATE_CUR) || 'USD',
+    rateCur: curSel(p, COL.WE_RATE_CUR) || 'USD',
     categoryId: getRelationFirst(p, COL.WE_CAT),
     title: getRichText(p, COL.WE_TITLE),
     amountNative: getNumber(p, COL.WE_AMT) || 0,
-    cur: getSelect(p, COL.WE_CUR) || 'USD',
+    cur: curSel(p, COL.WE_CUR) || 'USD',
     note: getRichText(p, COL.WE_NOTE),
     tgId: getNumber(p, COL.TG_ID),
   }
@@ -120,7 +123,7 @@ export function parseWorkCategory(page) {
     id: page.id,
     name: getTitle(p, COL.WC_NAME),
     rate: getNumber(p, COL.WC_RATE) || 0,
-    cur: getSelect(p, COL.WC_CUR) || 'USD',
+    cur: curSel(p, COL.WC_CUR) || 'USD',
     isDefault: getCheckbox(p, COL.WC_DEFAULT),
     tgId: getNumber(p, COL.TG_ID),
   }
@@ -133,7 +136,7 @@ export function parsePayout(page) {
     month: getRichText(p, COL.PO_MONTH) || getTitle(p, COL.PO_MONTH) || '',
     date: dateOnly(getDate(p, COL.PO_DATE)) || todayISO(),
     amount: getNumber(p, COL.PO_AMT) || 0,
-    cur: getSelect(p, COL.PO_CUR) || 'USD',
+    cur: curSel(p, COL.PO_CUR) || 'USD',
     type: getSelect(p, COL.PO_TYPE) || 'advance',
     categoryId: getRelationFirst(p, COL.PO_CAT),
     tgId: getNumber(p, COL.TG_ID),
@@ -148,7 +151,7 @@ export function parseGoal(page) {
     id: page.id,
     name: getTitle(p, COL.G_NAME),
     target: getNumber(p, COL.G_TARGET) || 0,
-    cur: getSelect(p, COL.G_CUR) || 'USD',
+    cur: curSel(p, COL.G_CUR) || 'USD',
     start: dateOnly(getDate(p, COL.G_START)) || todayISO(),
     deadline: dateOnly(getDate(p, COL.G_DEADLINE)),
     icon: getRichText(p, COL.G_ICON) || '🎯',
@@ -165,7 +168,7 @@ export function parseGoalTx(page) {
     goalId: getRelationFirst(p, COL.GT_GOAL),
     date: dateOnly(getDate(p, COL.GT_DATE)) || todayISO(),
     amount: getNumber(p, COL.GT_AMT) || 0,
-    cur: getSelect(p, COL.GT_CUR) || 'USD',
+    cur: curSel(p, COL.GT_CUR) || 'USD',
     type: getSelect(p, COL.GT_TYPE) || 'add',
     note: getRichText(p, COL.GT_NOTE),
     tgId: getNumber(p, COL.TG_ID),
@@ -194,7 +197,7 @@ export function parseAssetTx(page) {
     txType: getSelect(p, COL.AT_TXTYPE) || 'buy',
     qty: getNumber(p, COL.AT_QTY) || 0,
     price: getNumber(p, COL.AT_PRICE) || 0,
-    cur: getSelect(p, COL.AT_CUR) || 'USD',
+    cur: curSel(p, COL.AT_CUR) || 'USD',
     fee: getNumber(p, COL.AT_FEE) || 0,
     note: getRichText(p, COL.AT_NOTE),
     tgId: getNumber(p, COL.TG_ID),
@@ -207,7 +210,7 @@ export function parseExpense(page) {
   return {
     id: page.id,
     amount: getNumber(p, 'Сума') || 0,
-    currency: choiceOf(p, 'Валюта') || 'UAH',
+    currency: normCur(choiceOf(p, 'Валюта')) || 'UAH',
     date: dateOnly(getDate(p, 'Дата')) || todayISO(),
     categoryId: getRelationFirst(p, 'Категорія'),
     note: getRichText(p, 'Опис'),
@@ -229,7 +232,7 @@ export function parseLedger(page) {
     bankId: getRichText(p, 'Банк ID'),
     title: getTitle(p, titleKey),
     amount: getNumber(p, 'Сума') || 0,
-    currency: getSelect(p, 'Валюта') || 'UAH',
+    currency: normCur(getSelect(p, 'Валюта')) || 'UAH',
     usd: getNumber(p, 'USD'),
     date: getDate(p, 'Дата') || todayISO(),
     kind: LEDGER_KIND[type] || (getNumber(p, 'Сума') > 0 ? 'income' : 'expense'),

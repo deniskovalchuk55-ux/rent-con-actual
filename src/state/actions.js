@@ -4,7 +4,7 @@ import { toast, remapSheetIds } from './ui.js'
 import { haptic, initTelegram } from '../lib/telegram.js'
 import { setInitData, queryAll, createPage, updatePage, archivePage, cgPrices } from '../lib/notion/api.js'
 import * as S from '../lib/notion/schema.js'
-import { fetchRates, EXTRA_CURRENCIES } from '../lib/money.js'
+import { fetchRates, EXTRA_CURRENCIES, normCur } from '../lib/money.js'
 import { today, toISO } from '../lib/dates.js'
 
 const tgId = () => getState().user && getState().user.id
@@ -504,6 +504,65 @@ export function saveCategory({ id: catRef, name, rate, cur: currency, isDefault 
   ensureDefaultCategory()
   haptic.success()
   return resultId
+}
+
+// Валюту в «Роботі» вказали не ту (напр. $ замість zł): міняємо лише позначку валюти, числа лишаються ті самі.
+// Що саме змінюємо: записи й виплати категорії; для категорії за замовчуванням — ще підробітки й загальні виплати.
+export function workCurrencyScope(categoryId, from, { hourlyOnly = false } = {}) {
+  const d = getState().data
+  const cat = d.workCategories.find(c => c.id === cur(categoryId))
+  const withFree = !hourlyOnly && !!(cat && cat.isDefault)
+  const curOf = x => normCur(x) || 'USD'
+  const entries = d.workEntries.filter(e => (e.kind === 'hourly'
+    ? (e.categoryId || null) === (cat ? cat.id : null) && curOf(e.rateCur) === from
+    : withFree && curOf(e.cur) === from))
+  const payouts = hourlyOnly ? [] : d.payouts.filter(p => curOf(p.cur) === from && (p.categoryId ? p.categoryId === (cat && cat.id) : withFree))
+  return { entries, payouts }
+}
+
+// Записи категорії, чия валюта ставки не збігається з валютою категорії (напр. категорія в zł, а старі записи в $)
+export function staleWorkCurrency(data) {
+  const out = []
+  for (const c of data.workCategories) {
+    const by = {}
+    for (const e of data.workEntries) {
+      if (e.kind !== 'hourly' || (e.categoryId || null) !== c.id) continue
+      const ec = normCur(e.rateCur) || 'USD'
+      if (ec !== c.cur) by[ec] = (by[ec] || 0) + 1
+    }
+    const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0]
+    if (top) out.push({ category: c, from: top[0], count: top[1] })
+  }
+  return out
+}
+
+export function relabelWorkCurrency(categoryId, from, to, opts = {}) {
+  const uid = tgId()
+  const { entries, payouts } = workCurrencyScope(categoryId, from, opts)
+  if (!entries.length && !payouts.length) return { entries: 0, payouts: 0 }
+  const relabelE = e => (e.kind === 'hourly' ? { ...e, rateCur: to } : { ...e, cur: to })
+  const eIds = new Set(entries.map(e => e.id))
+  const pIds = new Set(payouts.map(p => p.id))
+  updateData(d => ({
+    ...d,
+    workEntries: d.workEntries.map(e => (eIds.has(e.id) ? relabelE(e) : e)),
+    payouts: d.payouts.map(p => (pIds.has(p.id) ? { ...p, cur: to } : p)),
+  }))
+  for (const before of entries) {
+    const after = relabelE(before)
+    patchRemote(before.id, async () => updatePage(await real(before.id), S.buildWorkEntryProps({ ...after, categoryId: await real(after.categoryId) }, uid)), {
+      rollback: () => updateData(d => ({ ...d, workEntries: d.workEntries.map(e => (e.id === cur(before.id) ? withCurIds(before) : e)) })),
+      error: 'Не вдалось змінити валюту запису',
+    })
+  }
+  for (const before of payouts) {
+    const after = { ...before, cur: to }
+    patchRemote(before.id, async () => updatePage(await real(before.id), S.buildPayoutProps({ ...after, categoryId: await real(after.categoryId) }, uid)), {
+      rollback: () => updateData(d => ({ ...d, payouts: d.payouts.map(p => (p.id === cur(before.id) ? withCurIds(before) : p)) })),
+      error: 'Не вдалось змінити валюту виплати',
+    })
+  }
+  return { entries: entries.length, payouts: payouts.length }
 }
 
 // має лишатися хоча б одна категорія за замовчуванням

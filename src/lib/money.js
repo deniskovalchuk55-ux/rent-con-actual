@@ -7,10 +7,34 @@ export const DEFAULT_RATES = { UAH: 41, PLN: 4.0, EUR: 0.86, GBP: 0.75, CHF: 0.8
 export const EXTRA_CURRENCIES = ['EUR', 'GBP', 'CHF', 'CZK']
 export const SYM_ANY = { USD: '$', UAH: '₴', PLN: 'zł', EUR: '€', GBP: '£', CHF: 'CHF', CZK: 'Kč' }
 
+// Валюта, як її вписали в Notion руками: «zł», «грн», «$», «pln» → код. Невідоме — як є, великими літерами.
+// Без цього «zł» не знаходилось у курсах і рахувалось як долар (суми в злотих роздувались у ~3,8 раза).
+const KNOWN_CUR = new Set(['USD', 'UAH', 'PLN', 'EUR', 'GBP', 'CHF', 'CZK'])
+const CUR_ALIASES = [
+  [/^(pln|zł|zl|zloty|złoty|zlotych|złotych|злот[а-яіїє]*)$/i, 'PLN'],
+  [/^(uah|₴|грн\.?|гривн[а-яіїє]*|hrn|hryvn[a-z]*)$/i, 'UAH'],
+  [/^(usd|\$|us\$|дол\.?|долар[а-яіїє]*|dollars?)$/i, 'USD'],
+  [/^(eur|€|євро|евро|euro)$/i, 'EUR'],
+  [/^(gbp|£|фунт[а-яіїє]*)$/i, 'GBP'],
+  [/^(czk|kč|kc)$/i, 'CZK'],
+  [/^(chf|франк[а-яіїє]*)$/i, 'CHF'],
+]
+const curCache = new Map()
+export function normCur(c) {
+  if (c == null || c === '') return null
+  if (KNOWN_CUR.has(c)) return c
+  if (curCache.has(c)) return curCache.get(c)
+  const s = String(c).trim()
+  let out = s ? s.toUpperCase() : null
+  for (const [rx, code] of CUR_ALIASES) if (rx.test(s)) { out = code; break }
+  curCache.set(c, out)
+  return out
+}
+
 export function convert(amount, fromCur, toCur, rates) {
   const v = Number(amount) || 0
-  const from = fromCur || 'USD'
-  const to = toCur || 'USD'
+  const from = normCur(fromCur) || 'USD'
+  const to = normCur(toCur) || 'USD'
   if (from === to) return v
   const r = rates || DEFAULT_RATES
   const usd = from === 'USD' ? v : v / (r[from] || DEFAULT_RATES[from] || 1)
@@ -38,7 +62,8 @@ export function numStr(v, { decimals } = {}) {
 }
 
 // formatMoney(1234.5, 'UAH') → «1 235 ₴»; sign: 'auto' | 'always' | 'never'
-export function formatMoney(v, cur = 'USD', { sign = 'auto', decimals } = {}) {
+export function formatMoney(v, cur0 = 'USD', { sign = 'auto', decimals } = {}) {
+  const cur = normCur(cur0) || 'USD'
   const n = Number(v) || 0
   const s = numStr(n, { decimals })
   const neg = n < 0 && Math.abs(roundSmart(n)) > 0
@@ -49,7 +74,8 @@ export function formatMoney(v, cur = 'USD', { sign = 'auto', decimals } = {}) {
 }
 
 // Компактно для графіків і календаря: 1,2k / 15k / 1,3M
-export function formatCompact(v, cur) {
+export function formatCompact(v, cur0) {
+  const cur = normCur(cur0)
   const n = Math.abs(Number(v) || 0)
   let s
   if (n >= 1e6) s = (Math.round(n / 1e5) / 10).toString().replace('.', ',') + 'M'
@@ -60,7 +86,7 @@ export function formatCompact(v, cur) {
   else s = String(Math.round(n * 100) / 100).replace('.', ',')
   const pre = v < 0 ? '−' : ''
   if (!cur) return pre + s
-  return cur === 'USD' ? pre + '$' + s : pre + s + SYM[cur]
+  return cur === 'USD' ? pre + '$' + s : pre + s + NNBSP + (SYM[cur] || SYM_ANY[cur] || cur)
 }
 
 export function parseAmount(str) {
